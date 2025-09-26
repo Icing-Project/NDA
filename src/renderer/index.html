@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';">
+    <title>NADE Desktop</title>
+    <link rel="stylesheet" href="styles/main.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Title bar for Windows -->
+        <div class="title-bar" id="titleBar">
+            <div class="title-bar-content">
+                <div class="title-bar-logo">
+                    <img src="assets/logo.svg" alt="NADE" class="logo-icon">
+                    <span class="app-title">NADE Desktop</span>
+                </div>
+                <div class="title-bar-controls">
+                    <button class="title-bar-button" id="minimizeBtn">
+                        <svg width="10" height="1">
+                            <path d="M 0 0 L 10 0" stroke="currentColor" stroke-width="1"/>
+                        </svg>
+                    </button>
+                    <button class="title-bar-button" id="maximizeBtn">
+                        <svg width="10" height="10">
+                            <path d="M 0 0 L 0 10 L 10 10 L 10 0 L 0 0" stroke="currentColor" stroke-width="1" fill="none"/>
+                        </svg>
+                    </button>
+                    <button class="title-bar-button close" id="closeBtn">
+                        <svg width="10" height="10">
+                            <path d="M 0 0 L 10 10 M 10 0 L 0 10" stroke="currentColor" stroke-width="1"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main content area -->
+        <div class="main-container">
+            <!-- Sidebar -->
+            <div class="sidebar">
+                <nav class="nav-menu">
+                    <button class="nav-item active" data-view="dashboard">
+                        <svg class="nav-icon" viewBox="0 0 24 24">
+                            <path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/>
+                        </svg>
+                        <span>Dashboard</span>
+                    </button>
+                    <button class="nav-item" data-view="audio-devices">
+                        <svg class="nav-icon" viewBox="0 0 24 24">
+                            <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
+                        </svg>
+                        <span>Audio Devices</span>
+                    </button>
+                    <button class="nav-item" data-view="encryption">
+                        <svg class="nav-icon" viewBox="0 0 24 24">
+                            <path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/>
+                        </svg>
+                        <span>Encryption</span>
+                    </button>
+                    <button class="nav-item" data-view="plugins">
+                        <svg class="nav-icon" viewBox="0 0 24 24">
+                            <path d="M13 8.57c-.79 0-1.43.64-1.43 1.43s.64 1.43 1.43 1.43 1.43-.64 1.43-1.43-.64-1.43-1.43-1.43zM13 3C9.88 3 7.19 4.87 6.07 7.5H3v2h1.72c-.23.78-.38 1.61-.43 2.5H3v2h1.36c.14 1.37.5 2.65 1.07 3.81L3 20.24l1.41 1.41 2.52-2.52c1.23 1.17 2.79 1.98 4.57 2.28V23h2v-1.58c1.82-.31 3.42-1.15 4.67-2.36l2.49 2.49 1.41-1.41-2.42-2.42c.57-1.16.93-2.43 1.07-3.79H22v-2h-1.3c-.05-.85-.19-1.67-.42-2.43H22v-2h-3.07C17.81 4.87 16.12 3 13 3zm0 16c-3.31 0-6-2.69-6-6s2.69-6 6-6 6 2.69 6 6-2.69 6-6 6z"/>
+                        </svg>
+                        <span>Plugins</span>
+                    </button>
+                    <button class="nav-item" data-view="settings">
+                        <svg class="nav-icon" viewBox="0 0 24 24">
+                            <path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/>
+                        </svg>
+                        <span>Settings</span>
+                    </button>
+                </nav>
+            </div>
+
+            <!-- Content area -->
+            <div class="content">
+                <div id="contentView">
+                    <!-- Dynamic content will be loaded here -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Status bar -->
+        <div class="status-bar">
+            <div class="status-item">
+                <span class="status-label">Audio Status:</span>
+                <span class="status-value" id="audioStatus">Idle</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">Encryption:</span>
+                <span class="status-value" id="encryptionStatus">Disabled</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">Latency:</span>
+                <span class="status-value" id="latencyValue">-- ms</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">CPU:</span>
+                <span class="status-value" id="cpuUsage">--%</span>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/renderer.js"></script>
+</body>
+</html>
