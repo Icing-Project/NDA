@@ -1,0 +1,120 @@
+cmake_minimum_required(VERSION 3.16)
+project(NADE VERSION 1.0.0 LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_AUTOMOC ON)
+set(CMAKE_AUTORCC ON)
+set(CMAKE_AUTOUIC ON)
+
+# Option to enable Python plugin support
+option(NADE_ENABLE_PYTHON "Enable Python plugin support" ON)
+
+# Qt6 packages
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets Gui Network)
+
+# OpenSSL for encryption
+find_package(OpenSSL REQUIRED)
+
+# Find Python and NumPy if Python support is enabled
+if(NADE_ENABLE_PYTHON)
+    find_package(Python3 COMPONENTS Interpreter Development NumPy)
+    if(Python3_FOUND)
+        message(STATUS "Python support enabled")
+        message(STATUS "  Python version: ${Python3_VERSION}")
+        message(STATUS "  Python include dirs: ${Python3_INCLUDE_DIRS}")
+        message(STATUS "  NumPy include dirs: ${Python3_NumPy_INCLUDE_DIRS}")
+        add_compile_definitions(NADE_ENABLE_PYTHON)
+    else()
+        message(WARNING "Python3 not found, Python plugin support disabled")
+        set(NADE_ENABLE_PYTHON OFF)
+    endif()
+endif()
+
+# Include directories
+include_directories(${CMAKE_SOURCE_DIR}/include)
+
+# Source files
+set(SOURCES
+    src/main.cpp
+    src/ui/MainWindow.cpp
+    src/ui/Dashboard.cpp
+    src/ui/AudioDevicesView.cpp
+    src/ui/EncryptionView.cpp
+    src/ui/PluginsView.cpp
+    src/ui/SettingsView.cpp
+    src/ui/PipelineView.cpp
+    src/audio/AudioEngine.cpp
+    src/audio/AudioDevice.cpp
+    src/crypto/Encryptor.cpp
+    src/crypto/KeyExchange.cpp
+    src/core/ProcessingPipeline.cpp
+    src/plugins/PluginManager.cpp
+)
+
+# Add Python bridge if enabled
+if(NADE_ENABLE_PYTHON)
+    list(APPEND SOURCES src/plugins/PythonPluginBridge.cpp)
+endif()
+
+# Header files
+set(HEADERS
+    include/ui/MainWindow.h
+    include/ui/Dashboard.h
+    include/ui/AudioDevicesView.h
+    include/ui/EncryptionView.h
+    include/ui/PluginsView.h
+    include/ui/SettingsView.h
+    include/ui/PipelineView.h
+    include/audio/AudioEngine.h
+    include/audio/AudioDevice.h
+    include/audio/AudioBuffer.h
+    include/crypto/Encryptor.h
+    include/crypto/KeyExchange.h
+    include/core/ProcessingPipeline.h
+    include/plugins/PluginTypes.h
+    include/plugins/BasePlugin.h
+    include/plugins/AudioSourcePlugin.h
+    include/plugins/BearerPlugin.h
+    include/plugins/EncryptorPlugin.h
+    include/plugins/AudioSinkPlugin.h
+    include/plugins/PluginManager.h
+)
+
+# Add Python bridge header if enabled
+if(NADE_ENABLE_PYTHON)
+    list(APPEND HEADERS include/plugins/PythonPluginBridge.h)
+endif()
+
+# Create executable
+add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS})
+
+# Link libraries
+target_link_libraries(${PROJECT_NAME}
+    Qt6::Core
+    Qt6::Widgets
+    Qt6::Gui
+    Qt6::Network
+    OpenSSL::SSL
+    OpenSSL::Crypto
+)
+
+# Link Python libraries if enabled
+if(NADE_ENABLE_PYTHON)
+    target_include_directories(${PROJECT_NAME} PRIVATE
+        ${Python3_INCLUDE_DIRS}
+        ${Python3_NumPy_INCLUDE_DIRS}
+    )
+    target_link_libraries(${PROJECT_NAME} Python3::Python)
+endif()
+
+# Platform-specific settings
+if(WIN32)
+    # Windows audio APIs
+    target_link_libraries(${PROJECT_NAME} winmm dsound)
+    # Enable console for debugging
+    set_target_properties(${PROJECT_NAME} PROPERTIES WIN32_EXECUTABLE OFF)
+endif()
+
+# Install targets
+install(TARGETS ${PROJECT_NAME} DESTINATION bin)

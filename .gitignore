@@ -1,45 +1,53 @@
-# Dependencies
-node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# Build output
-dist/
+# Build directories
 build/
-out/
-*.log
+build-*/
+cmake-build-*/
 
-# Native module builds
-src/native/build/
-*.node
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cmake
+!CMakeLists.txt
+
+# C++ compiled files
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.exe
+
+# Qt generated files
+moc_*.cpp
+moc_*.h
+qrc_*.cpp
+ui_*.h
+*.qm
+.qmake.stash
+*.pro.user
+*.pro.user.*
 
 # IDE files
 .vscode/
+.vs/
 .idea/
 *.swp
 *.swo
-.DS_Store
-
-# Environment files
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-
-# Temporary files
-*.tmp
-*.temp
-.cache/
+*~
 
 # OS files
+.DS_Store
 Thumbs.db
-desktop.ini
 
-# Test coverage
-coverage/
-.nyc_output/
+# Debug/Release
+debug/
+release/
+Debug/
+Release/
 
-# Electron
-electron-builder.env
+# Logs
+*.log
