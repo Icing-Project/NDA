@@ -16,6 +16,12 @@ NADE Desktop is a high-performance, Windows-native audio processing system desig
 - **Cross-Platform Development**: Develop on Linux, deploy on Windows
 - **Low Memory Footprint**: ~50-100MB RAM usage
 
+## Tested Environment
+
+- Ubuntu 24.04.3 LTS (GCC 13.3, CMake 3.28, Qt 6.4 packages from apt)
+- Python 3.12 with `sounddevice` 0.5.x and PortAudio backend
+- PortAudio 19.6 (`portaudio19-dev` / `python3-pyaudio`)
+
 ## Technology Stack
 
 - **Language**: C++17 (minimum), C++20 (preferred)
@@ -27,95 +33,62 @@ NADE Desktop is a high-performance, Windows-native audio processing system desig
   - WDM-KS (kernel streaming)
 - **Encryption**: OpenSSL 3.x (AES-256-GCM)
 
-## System Requirements
+## Development Environment (Ubuntu)
 
-### Development (Linux)
-- Fedora 41+ / Ubuntu 22.04+ / Debian 12+
-- GCC 11+ or Clang 14+
-- Qt6 (6.2+)
-- CMake 3.16+
-- OpenSSL 3.x
-- Git
+All build and runtime verification was performed on **Ubuntu 24.04.3 LTS**. The instructions below assume that platform (the same commands work on Ubuntu 22.04+ and recent Debian releases).
 
-### Target Platform (Windows)
-**Minimum**:
-- Windows 10 20H2 (64-bit)
-- Intel i3 / AMD Ryzen 3 or equivalent
-- 4GB RAM
-- Onboard audio device
-
-**Recommended**:
-- Windows 11 (64-bit)
-- Intel i5 / AMD Ryzen 5 or equivalent
-- 8GB RAM
-- USB Audio Interface
-
-**Professional**:
-- Windows 11 Pro (64-bit)
-- Intel i7 / AMD Ryzen 7 or equivalent
-- 16GB RAM
-- ASIO-compatible audio interface
-
-## Installation (Development on Linux)
-
-### 1. Install Dependencies (Fedora)
+### 1. Install system packages
 
 ```bash
-# Install Qt6 and development tools
-sudo dnf install \
-    qt6-qtbase-devel \
-    qt6-qtbase-gui \
+sudo apt-get update
+sudo apt-get install -y \
+    build-essential \
     cmake \
-    gcc-c++ \
-    git \
-    openssl-devel
-
-# Optional: for cross-compilation to Windows
-sudo dnf install mingw64-qt6-qtbase mingw64-gcc-c++
+    qt6-base-dev \
+    qt6-base-dev-tools \
+    libqt6opengl6-dev \
+    libssl-dev \
+    python3 \
+    python3-dev \
+    python3-pip \
+    python3-numpy \
+    portaudio19-dev \
+    python3-pyaudio \
+    libgl1-mesa-dev \
+    git
 ```
 
-### 2. Build the Project
+> Qt6 installs into `/usr/lib/x86_64-linux-gnu/cmake/Qt6` by default on Ubuntu. If you are using a custom Qt build, set `CMAKE_PREFIX_PATH` or `Qt6_DIR` accordingly so CMake can locate it.
+
+### 2. Install Python plugin runtime dependencies
+
+`CMakeLists.txt` enables `NADE_ENABLE_PYTHON=ON`, so the UI auto-load feature expects the Python plugins in `plugins_py/` plus their dependencies. Either create a virtual environment or allow user installs (Ubuntu uses PEP 668 protections by default):
 
 ```bash
-# From project root directory
-cd /home/bartosz/delivery/NDA
+# Option A: virtual environment (recommended)
+python3 -m venv .nade-venv
+source .nade-venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
 
-# Create build directory
-mkdir build && cd build
-
-# Configure with CMake
-cmake ..
-
-# Build
-make -j$(nproc)
-
-# Run (on Linux for testing UI)
-./NADE
+# Option B: system interpreter (requires --break-system-packages on Ubuntu)
+pip3 install --user --break-system-packages -r requirements.txt
 ```
 
-## Building for Windows
+If you do not need Python plugins, configure with `-DNADE_ENABLE_PYTHON=OFF` and skip these packages. The UI plugin auto-loader will be disabled in that configuration.
 
-### Option 1: Cross-Compile from Linux
+### 3. Configure, build, and run
 
 ```bash
-# Using MinGW cross-compiler
-mkdir build-windows && cd build-windows
-cmake .. -DCMAKE_TOOLCHAIN_FILE=../cmake/mingw-w64.cmake
-cmake --build . -j$(nproc)
+# From the repo root
+cmake -S . -B build
+cmake --build build -j$(nproc)
+
+# Launch the Qt UI (from the project root)
+./build/NADE
 ```
 
-### Option 2: Build on Windows
-
-```powershell
-# Install Qt 6 from https://www.qt.io/download-open-source
-# Install Visual Studio 2022 or MinGW
-
-# In project directory
-mkdir build
-cd build
-cmake -G "Visual Studio 17 2022" ..
-cmake --build . --config Release
-```
+At startup the application will attempt to auto-load every plugin in `plugins_py/`. Audio capture/playback plugins require `sounddevice` (provided via `requirements.txt`) and the system PortAudio/PyAudio libs installed in step 1. If you see “[PortAudio library not found]”, re-check the `portaudio19-dev` and `python3-pyaudio` packages.
 
 ## Project Structure
 
@@ -269,39 +242,40 @@ Main Thread (Qt GUI)
 ### Building with Debug Symbols
 
 ```bash
-cmake -DCMAKE_BUILD_TYPE=Debug ..
-cmake --build .
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+cmake --build build -j$(nproc)
 ```
 
 ### Running Tests
 
-```bash
-ctest --output-on-failure
-```
+Automated CTest suites are not yet part of the repository. Add tests under a `tests/` directory and enable them in CMake before running `ctest`.
 
 ## Troubleshooting
 
-### Linux Development
+### Qt not found
 
-**Qt not found**:
+Ubuntu installs Qt6 files under `/usr/lib/x86_64-linux-gnu/cmake/Qt6`. If you are using a custom Qt build, set:
+
 ```bash
-export CMAKE_PREFIX_PATH=/usr/lib64/cmake/Qt6
+export CMAKE_PREFIX_PATH=/path/to/Qt/6.x/gcc_64/lib/cmake
 ```
 
-**Build errors**:
+### Build errors / stale artifacts
+
 ```bash
 # Clean build
 rm -rf build && mkdir build && cd build
 cmake .. && cmake --build .
 ```
 
-### Windows Deployment
+### PortAudio / sounddevice errors
 
-**Missing DLL errors**:
-```bash
-# Use windeployqt to copy Qt DLLs
-windeployqt.exe nade-desktop.exe
-```
+- Ensure `portaudio19-dev` and `python3-pyaudio` are installed.
+- Reinstall the Python dependencies (inside your venv if applicable):
+  ```bash
+  pip install --force-reinstall -r requirements.txt
+  ```
+- If PulseAudio plugins complain about missing PyAudio, verify `python3-pyaudio` is available in the interpreter you are running the app with.
 
 ## License
 
