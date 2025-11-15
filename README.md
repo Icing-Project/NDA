@@ -1,10 +1,10 @@
 # NADE Desktop Application
 
-Professional Audio Encryption Bridge System for Windows - **C++/Qt6 Implementation**
+Professional Audio Encryption Bridge System - **C++/Qt6 Implementation**
 
 ## Overview
 
-NADE Desktop is a high-performance, Windows-native audio processing system designed to provide real-time encryption for various audio communication channels. Built with modern C++17/20 and Qt6 for maximum performance, it leverages Windows audio APIs (WASAPI/ASIO) for ultra-low latency while maintaining a flexible plugin architecture for extensibility.
+NADE Desktop is a high-performance, Windows-native (but Linux compatible, obviously) audio processing system designed to provide real-time encryption for various audio communication channels. Built with modern C++17/20 and Qt6 for maximum performance, it leverages Windows audio APIs (WASAPI/ASIO) for ultra-low latency while maintaining a flexible plugin architecture for extensibility.
 
 ## Key Features
 
@@ -32,6 +32,24 @@ NADE Desktop is a high-performance, Windows-native audio processing system desig
   - ASIO SDK (optional, for pro audio)
   - WDM-KS (kernel streaming)
 - **Encryption**: OpenSSL 3.x (AES-256-GCM)
+
+## How to use
+
+We currently only provide an Ubuntu-built binary.
+
+### Ubuntu
+
+Download the [pre-release binary](https://github.com/Icing-Project/NDA/releases/tag/pre-1.1) and execute it.
+
+-----
+
+### Load the audio plugins
+
+Either by selecting them manually from a custom folder, or by clicking the "Auto-Load" button.
+
+### Configure your audio path
+
+Select your audio source and audio sink
 
 ## Development Environment (Ubuntu)
 
