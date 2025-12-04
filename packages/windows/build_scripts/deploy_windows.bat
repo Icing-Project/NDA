@@ -17,7 +17,7 @@ if not exist "build\Release\NADE.exe" (
 
 REM Run Python deployment script
 echo Running deployment script...
-python deploy.py
+python ..\..\..\scripts\deploy.py
 if %ERRORLEVEL% NEQ 0 (
     echo Deployment script failed!
     pause
@@ -36,6 +36,8 @@ if exist "C:\Qt\6.5.3\msvc2019_64\bin\windeployqt.exe" (
     set QT_DIR=C:\Qt\6.5.3\msvc2019_64
 ) else if exist "C:\Qt\6.6.0\msvc2019_64\bin\windeployqt.exe" (
     set QT_DIR=C:\Qt\6.6.0\msvc2019_64
+) else if exist "C:\Qt\6.6.3\msvc2019_64\bin\windeployqt.exe" (
+    set QT_DIR=C:\Qt\6.6.3\msvc2019_64
 ) else if exist "C:\Qt\6.7.0\msvc2019_64\bin\windeployqt.exe" (
     set QT_DIR=C:\Qt\6.7.0\msvc2019_64
 )

@@ -23,8 +23,8 @@ cd build
 REM Configure with CMake
 echo Configuring with CMake...
 cmake .. -G "Visual Studio 17 2022" -A x64 ^
-    -DCMAKE_PREFIX_PATH="C:/Qt/6.x/msvc2019_64" ^
-    -DOPENSSL_ROOT_DIR="C:/OpenSSL-Win64"
+    -DCMAKE_PREFIX_PATH="C:/Qt/6.6.3/msvc2019_64" ^
+    -DOPENSSL_ROOT_DIR="C:/Program Files/OpenSSL-Win64"
 
 if %ERRORLEVEL% NEQ 0 (
     echo CMake configuration failed!
