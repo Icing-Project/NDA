@@ -1,11 +1,11 @@
-# NADE Desktop Application for Windows
+# NDA Desktop Application for Windows
 ## Professional Audio Encryption Bridge System
 
 ---
 
 ## Executive Summary
 
-The NADE Desktop Application is a Windows-native audio processing system designed to provide real-time encryption for various audio communication channels. Built with C++ and Qt6 for maximum performance, it leverages Windows audio APIs for optimal performance while maintaining a flexible plugin architecture for different audio sources and encryption methods.
+The NDA Desktop Application is a Windows-native audio processing system designed to provide real-time encryption for various audio communication channels. Built with C++ and Qt6 for maximum performance, it leverages Windows audio APIs for optimal performance while maintaining a flexible plugin architecture for different audio sources and encryption methods.
 
 ### Key Features
 - **Windows Native Performance**: C++ implementation with direct Windows API access
@@ -46,7 +46,7 @@ The NADE Desktop Application is a Windows-native audio processing system designe
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                   NADE Windows Application              │
+│                   NDA Windows Application              │
 ├─────────────────────────────────────────────────────────┤
 │                                                         │
 │  ┌──────────────────────────────────────────────────┐  │
@@ -89,7 +89,7 @@ The NADE Desktop Application is a Windows-native audio processing system designe
 int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
-    app.setApplicationName("NADE");
+    app.setApplicationName("NDA");
     app.setApplicationVersion("1.0.0");
 
     // Set dark theme
@@ -233,13 +233,13 @@ public:
 };
 
 // Plugin factory macros
-#define NADE_PLUGIN_EXPORT extern "C" __declspec(dllexport)
+#define NDA_PLUGIN_EXPORT extern "C" __declspec(dllexport)
 
-#define NADE_DECLARE_PLUGIN(PluginClass) \
-    NADE_PLUGIN_EXPORT PluginInterface* createPlugin() { \
+#define NDA_DECLARE_PLUGIN(PluginClass) \
+    NDA_PLUGIN_EXPORT PluginInterface* createPlugin() { \
         return new PluginClass(); \
     } \
-    NADE_PLUGIN_EXPORT void destroyPlugin(PluginInterface* plugin) { \
+    NDA_PLUGIN_EXPORT void destroyPlugin(PluginInterface* plugin) { \
         delete plugin; \
     }
 
@@ -272,7 +272,7 @@ public:
         return {
             "Spotify Source",
             "1.0.0",
-            "NADE Team",
+            "Icing Project",
             "Captures audio from Spotify playback",
             PluginType::AudioSource,
             1
@@ -294,7 +294,7 @@ public:
 };
 
 // Export plugin
-NADE_DECLARE_PLUGIN(SpotifySourcePlugin)
+NDA_DECLARE_PLUGIN(SpotifySourcePlugin)
 ```
 
 ---
@@ -509,7 +509,7 @@ cmake ..
 make -j$(nproc)
 
 # Run
-./NADE
+./NDA
 ```
 
 **Windows Build (Target Platform):**
@@ -529,7 +529,7 @@ REM Build
 cmake --build . --config Release
 
 REM Run
-Release\NADE.exe
+Release\NDA.exe
 ```
 
 ### CMake Build Configuration
@@ -537,7 +537,7 @@ Release\NADE.exe
 ```cmake
 # CMakeLists.txt
 cmake_minimum_required(VERSION 3.16)
-project(NADE VERSION 1.0.0 LANGUAGES CXX)
+project(NDA VERSION 1.0.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -576,22 +576,22 @@ Use NSIS or WiX Toolset for creating professional Windows installers:
 
 ```nsis
 # installer.nsi (NSIS Script)
-!define APP_NAME "NADE Desktop"
+!define APP_NAME "NDA Desktop"
 !define APP_VERSION "1.0.0"
-!define APP_PUBLISHER "NADE Team"
+!define APP_PUBLISHER "Icing Project"
 
 Name "${APP_NAME}"
-OutFile "NADE-Setup-${APP_VERSION}.exe"
-InstallDir "$PROGRAMFILES64\NADE"
+OutFile "NDA-Setup-${APP_VERSION}.exe"
+InstallDir "$PROGRAMFILES64\NDA"
 
 Section "Install"
     SetOutPath "$INSTDIR"
-    File "Release\NADE.exe"
+    File "Release\NDA.exe"
     File "*.dll"  # Qt and OpenSSL DLLs
 
     CreateDirectory "$SMPROGRAMS\${APP_NAME}"
-    CreateShortcut "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk" "$INSTDIR\NADE.exe"
-    CreateShortcut "$DESKTOP\${APP_NAME}.lnk" "$INSTDIR\NADE.exe"
+    CreateShortcut "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk" "$INSTDIR\NDA.exe"
+    CreateShortcut "$DESKTOP\${APP_NAME}.lnk" "$INSTDIR\NDA.exe"
 
     WriteUninstaller "$INSTDIR\Uninstall.exe"
 SectionEnd
@@ -751,7 +751,7 @@ void AudioEngine::processAudioSIMD(float* input, float* output, size_t samples) 
 
 ## Conclusion
 
-The NADE Desktop Application for Windows leverages C++ and Qt6 to provide maximum performance and native Windows integration. By using direct Windows audio APIs (WASAPI, ASIO, WDM-KS) and hardware-accelerated encryption (AES-NI), the application achieves professional-grade performance with ultra-low latency and minimal resource usage.
+The NDA Desktop Application for Windows leverages C++ and Qt6 to provide maximum performance and native Windows integration. By using direct Windows audio APIs (WASAPI, ASIO, WDM-KS) and hardware-accelerated encryption (AES-NI), the application achieves professional-grade performance with ultra-low latency and minimal resource usage.
 
 The C++/Qt architecture provides:
 - **Superior Performance**: <5ms latency, <10% CPU usage, <100MB RAM

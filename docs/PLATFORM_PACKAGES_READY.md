@@ -1,4 +1,4 @@
-# ✅ NADE - PLATFORM PACKAGES READY
+# ✅ NDA - PLATFORM PACKAGES READY
 
 ## 📦 Package Locations
 
@@ -23,7 +23,7 @@
 ```
 readytoship_linux/
 ├── bin/
-│   └── NADE                    # Linux executable (629 KB)
+│   └── NDA                    # Linux executable (629 KB)
 ├── plugins/                     # 10 Python plugins
 │   ├── sounddevice_microphone.py  ⭐ Recommended
 │   ├── sounddevice_speaker.py     ⭐ Recommended
@@ -33,7 +33,7 @@ readytoship_linux/
 │   ├── USER_GUIDE.md
 │   ├── SPECIFICATIONS.md
 │   └── README.md
-├── run_nade.sh                  # Launcher script
+├── run_NDA.sh                  # Launcher script
 ├── requirements.txt             # Python dependencies
 ├── VERSION.txt
 └── README.md
@@ -43,14 +43,14 @@ readytoship_linux/
 ```bash
 cd readytoship_linux
 pip3 install --user -r requirements.txt
-./run_nade.sh
+./run_NDA.sh
 ```
 
 ### Linux Distribution
 ```bash
 cd /home/bartosz/delivery/NDA
-tar -czf NADE-v1.0.0-Linux.tar.gz readytoship_linux/
-# Result: NADE-v1.0.0-Linux.tar.gz (~250 KB compressed)
+tar -czf NDA-v1.0.0-Linux.tar.gz readytoship_linux/
+# Result: NDA-v1.0.0-Linux.tar.gz (~250 KB compressed)
 ```
 
 ---
@@ -59,7 +59,7 @@ tar -czf NADE-v1.0.0-Linux.tar.gz readytoship_linux/
 
 ```
 readytoship_windows/
-├── bin/                         # Empty - will contain NADE.exe after build
+├── bin/                         # Empty - will contain NDA.exe after build
 ├── src/                         # Full C++ source code
 │   ├── main.cpp
 │   ├── core/
@@ -82,7 +82,7 @@ readytoship_windows/
 │   ├── WINDOWS_README.md       # Setup guide
 │   ├── USER_GUIDE.md
 │   └── SPECIFICATIONS.md
-├── run_nade.bat                # Launcher (checks if built)
+├── run_NDA.bat                # Launcher (checks if built)
 ├── requirements.txt
 ├── VERSION.txt
 └── README.md
@@ -98,14 +98,14 @@ deploy_windows.bat
 REM Then run:
 cd ..
 pip install -r requirements.txt
-run_nade.bat
+run_NDA.bat
 ```
 
 ### Windows Distribution
 ```cmd
 REM After building:
 cd readytoship_windows
-7z a NADE-v1.0.0-Windows.zip *
+7z a NDA-v1.0.0-Windows.zip *
 REM Or create installer with Inno Setup
 ```
 
@@ -116,22 +116,22 @@ REM Or create installer with Inno Setup
 ### Package Linux Version NOW
 ```bash
 cd /home/bartosz/delivery/NDA
-tar -czf NADE-v1.0.0-Linux-x64.tar.gz readytoship_linux/
-echo "✓ Linux package ready: NADE-v1.0.0-Linux-x64.tar.gz"
+tar -czf NDA-v1.0.0-Linux-x64.tar.gz readytoship_linux/
+echo "✓ Linux package ready: NDA-v1.0.0-Linux-x64.tar.gz"
 ```
 
 ### Package Windows Source (for building on Windows)
 ```bash
 cd /home/bartosz/delivery/NDA
-tar -czf NADE-v1.0.0-Windows-Source.tar.gz readytoship_windows/
-echo "✓ Windows source package ready: NADE-v1.0.0-Windows-Source.tar.gz"
+tar -czf NDA-v1.0.0-Windows-Source.tar.gz readytoship_windows/
+echo "✓ Windows source package ready: NDA-v1.0.0-Windows-Source.tar.gz"
 echo "  Transfer to Windows machine and extract"
 ```
 
 Or with zip:
 ```bash
 cd /home/bartosz/delivery/NDA
-zip -r NADE-v1.0.0-Windows-Source.zip readytoship_windows/
+zip -r NDA-v1.0.0-Windows-Source.zip readytoship_windows/
 ```
 
 ---
@@ -153,24 +153,24 @@ zip -r NADE-v1.0.0-Windows-Source.zip readytoship_windows/
 ## 🔧 What Each User Needs
 
 ### Linux User
-1. Download `NADE-v1.0.0-Linux-x64.tar.gz`
-2. Extract: `tar -xzf NADE-v1.0.0-Linux-x64.tar.gz`
+1. Download `NDA-v1.0.0-Linux-x64.tar.gz`
+2. Extract: `tar -xzf NDA-v1.0.0-Linux-x64.tar.gz`
 3. Install Python deps: `pip3 install -r requirements.txt`
-4. Run: `./run_nade.sh`
+4. Run: `./run_NDA.sh`
 
 ### Windows User (Binary Distribution)
-1. Download pre-built `NADE-v1.0.0-Windows.zip` (after you build it)
+1. Download pre-built `NDA-v1.0.0-Windows.zip` (after you build it)
 2. Extract
 3. Install Python deps: `pip install -r requirements.txt`
-4. Run: `run_nade.bat`
+4. Run: `run_NDA.bat`
 
 ### Windows User (Source Distribution)
-1. Download `NADE-v1.0.0-Windows-Source.zip`
+1. Download `NDA-v1.0.0-Windows-Source.zip`
 2. Extract
 3. Install prerequisites (Visual Studio, Qt, CMake, Python, OpenSSL)
 4. Build: `cd build_scripts && build_windows.bat`
 5. Deploy: `deploy_windows.bat`
-6. Run: `cd .. && run_nade.bat`
+6. Run: `cd .. && run_NDA.bat`
 
 ---
 
@@ -180,9 +180,9 @@ zip -r NADE-v1.0.0-Windows-Source.zip readytoship_windows/
 ```bash
 cd readytoship_linux
 pip3 install --user -r requirements.txt
-./run_nade.sh
+./run_NDA.sh
 
-# In NADE:
+# In NDA:
 # 1. Click "Auto-Load Python Plugins"
 # 2. Select: SoundDevice Microphone → WAV File Recorder
 # 3. Start Pipeline → Wait 5s → Stop
@@ -193,9 +193,9 @@ pip3 install --user -r requirements.txt
 ```cmd
 cd readytoship_windows
 pip install -r requirements.txt
-run_nade.bat
+run_NDA.bat
 
-REM In NADE:
+REM In NDA:
 REM 1. Click "Auto-Load Python Plugins"
 REM 2. Select: SoundDevice Microphone → WAV File Recorder
 REM 3. Start Pipeline → Wait 5s → Stop
@@ -208,8 +208,8 @@ REM 4. Check for recording_*.wav file
 
 ### For End Users
 **Option 1: Binary Packages (Easiest)**
-- Linux: `NADE-v1.0.0-Linux-x64.tar.gz` (ready to run)
-- Windows: `NADE-v1.0.0-Windows-x64.zip` (ready to run, after you build it once)
+- Linux: `NDA-v1.0.0-Linux-x64.tar.gz` (ready to run)
+- Windows: `NDA-v1.0.0-Windows-x64.zip` (ready to run, after you build it once)
 
 **Option 2: Installers (Professional)**
 - Linux: Create .deb or .rpm package
@@ -217,7 +217,7 @@ REM 4. Check for recording_*.wav file
 
 ### For Developers
 - Linux: Can use binary package or build from source
-- Windows: `NADE-v1.0.0-Windows-Source.zip` (full source + build scripts)
+- Windows: `NDA-v1.0.0-Windows-Source.zip` (full source + build scripts)
 
 ---
 
@@ -278,10 +278,10 @@ Windows package additionally includes:
 Package them with:
 ```bash
 # Linux binary
-tar -czf NADE-v1.0.0-Linux-x64.tar.gz readytoship_linux/
+tar -czf NDA-v1.0.0-Linux-x64.tar.gz readytoship_linux/
 
 # Windows source
-tar -czf NADE-v1.0.0-Windows-Source.tar.gz readytoship_windows/
+tar -czf NDA-v1.0.0-Windows-Source.tar.gz readytoship_windows/
 # or
-zip -r NADE-v1.0.0-Windows-Source.zip readytoship_windows/
+zip -r NDA-v1.0.0-Windows-Source.zip readytoship_windows/
 ```

@@ -3,7 +3,7 @@
 #include <cstring>
 #include <iostream>
 
-namespace NADE {
+namespace nda {
 
 class AlsaMicrophonePlugin : public AudioSourcePlugin {
 public:
@@ -104,10 +104,10 @@ public:
         return {
             "ALSA Microphone",
             "1.0.0",
-            "NADE Team",
+            "Icing Project",
             "Captures audio from default microphone using ALSA",
             PluginType::AudioSource,
-            NADE_PLUGIN_API_VERSION
+            NDA_PLUGIN_API_VERSION
         };
     }
 
@@ -194,7 +194,8 @@ private:
     snd_pcm_t* handle_;
 };
 
-} // namespace NADE
+} // namespace nda
 
 // Export the plugin
-NADE_DECLARE_PLUGIN(NADE::AlsaMicrophonePlugin)
+// Export the plugin
+NDA_DECLARE_PLUGIN(nda::AlsaMicrophonePlugin)

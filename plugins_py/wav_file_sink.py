@@ -100,7 +100,7 @@ class WavFileSinkPlugin(AudioSinkPlugin):
         return PluginInfo(
             name="WAV File Recorder",
             version="1.0.0",
-            author="NADE Team",
+            author="Icing Project",
             description="Records audio to WAV file (32-bit float PCM)",
             plugin_type=PluginType.AUDIO_SINK,
             api_version=1

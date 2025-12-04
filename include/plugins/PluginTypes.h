@@ -1,7 +1,7 @@
 #ifndef PLUGINTYPES_H
 #define PLUGINTYPES_H
 
-namespace NADE {
+namespace nda {
 
 enum class PluginType {
     AudioSource,    // Audio input (microphone, file, streaming service)
@@ -19,6 +19,6 @@ enum class PluginState {
     Error
 };
 
-} // namespace NADE
+} // namespace nda
 
 #endif // PLUGINTYPES_H

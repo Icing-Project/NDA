@@ -8,9 +8,9 @@ int main(int argc, char *argv[])
     QApplication app(argc, argv);
 
     // Set application metadata
-    app.setApplicationName("NADE");
+    app.setApplicationName("NDA");
     app.setApplicationVersion("1.0.0");
-    app.setOrganizationName("NADE");
+    app.setOrganizationName("NDA");
 
     // Set modern dark theme
     app.setStyle(QStyleFactory::create("Fusion"));

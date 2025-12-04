@@ -11,7 +11,7 @@
 #include <memory>
 #include <map>
 
-namespace NADE {
+namespace nda {
 
 struct LoadedPlugin {
     std::string path;
@@ -54,13 +54,13 @@ private:
 
     // Plugin loading helpers
     bool loadCppPlugin(const std::string& path);
-#ifdef NADE_ENABLE_PYTHON
+#ifdef NDA_ENABLE_PYTHON
     bool loadPythonPlugin(const std::string& path);
 #endif
 
     std::map<std::string, LoadedPlugin> plugins_;
 };
 
-} // namespace NADE
+} // namespace nda
 
 #endif // PLUGINMANAGER_H

@@ -1,6 +1,6 @@
 /**
  * @file python_plugin_example.cpp
- * @brief Example demonstrating how to use Python plugins in NADE
+* @brief Example demonstrating how to use Python plugins in NDA
  *
  * This example shows:
  * 1. Loading Python plugins from C++
@@ -12,20 +12,20 @@
 #include <chrono>
 #include <thread>
 
-#ifdef NADE_ENABLE_PYTHON
+#ifdef NDA_ENABLE_PYTHON
 #include "plugins/PythonPluginBridge.h"
 #endif
 
 #include "audio/AudioBuffer.h"
 
-using namespace NADE;
+using namespace nda;
 
 void exampleSineWaveToNullSink() {
     std::cout << "============================================" << std::endl;
     std::cout << "Python Plugin Example: Sine Wave -> Null Sink" << std::endl;
     std::cout << "============================================" << std::endl;
 
-#ifdef NADE_ENABLE_PYTHON
+#ifdef NDA_ENABLE_PYTHON
     // Create Python plugin bridges
     PythonPluginBridge* sineWave = PythonPluginFactory::createPlugin("sine_wave_source");
     PythonPluginBridge* nullSink = PythonPluginFactory::createPlugin("null_sink");
@@ -108,7 +108,7 @@ void exampleSineWaveToNullSink() {
 
 #else
     std::cout << "Python support not enabled!" << std::endl;
-    std::cout << "Rebuild with -DNADE_ENABLE_PYTHON=ON" << std::endl;
+    std::cout << "Rebuild with -DNDA_ENABLE_PYTHON=ON" << std::endl;
 #endif
 }
 
@@ -117,7 +117,7 @@ void exampleSineWaveToWavFile() {
     std::cout << "Python Plugin Example: Sine Wave -> WAV File" << std::endl;
     std::cout << "============================================" << std::endl;
 
-#ifdef NADE_ENABLE_PYTHON
+#ifdef NDA_ENABLE_PYTHON
     // Create Python plugin bridges
     PythonPluginBridge* sineWave = PythonPluginFactory::createPlugin("sine_wave_source");
     PythonPluginBridge* wavFile = PythonPluginFactory::createPlugin("wav_file_sink");
@@ -177,7 +177,7 @@ void listPythonPlugins() {
     std::cout << "Available Python Plugins" << std::endl;
     std::cout << "============================================" << std::endl;
 
-#ifdef NADE_ENABLE_PYTHON
+#ifdef NDA_ENABLE_PYTHON
     const char* pluginNames[] = {
         "sine_wave_source",
         "null_sink",
@@ -209,7 +209,7 @@ void listPythonPlugins() {
 }
 
 int main(int argc, char* argv[]) {
-    std::cout << "NADE Python Plugin Example" << std::endl;
+    std::cout << "NDA Python Plugin Example" << std::endl;
     std::cout << "==========================" << std::endl;
 
     // List available plugins

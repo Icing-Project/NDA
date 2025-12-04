@@ -20,7 +20,7 @@ Dashboard::~Dashboard()
 {
 }
 
-void Dashboard::setPipeline(std::shared_ptr<NADE::ProcessingPipeline> pipeline)
+void Dashboard::setPipeline(std::shared_ptr<nda::ProcessingPipeline> pipeline)
 {
     pipeline_ = pipeline;
 }

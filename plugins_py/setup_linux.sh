@@ -1,8 +1,8 @@
 #!/bin/bash
-# Linux setup script for NADE Python plugins
+# Linux setup script for NDA Python plugins
 
 echo "======================================"
-echo "NADE Python Plugins Setup (Linux)"
+echo "NDA Python Plugins Setup (Linux)"
 echo "======================================"
 echo ""
 
@@ -56,7 +56,7 @@ if [ $? -eq 0 ]; then
     echo ""
     echo "You can now:"
     echo "  1. Run ./test_plugins.py to test the plugins"
-    echo "  2. Use the plugins from the NADE C++ application"
+    echo "  2. Use the plugins from the NDA C++ application"
     echo ""
 else
     echo ""

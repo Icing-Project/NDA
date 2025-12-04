@@ -345,13 +345,13 @@ void PipelineView::applyModernStyles()
     )");
 }
 
-void PipelineView::setPluginManager(std::shared_ptr<NADE::PluginManager> manager)
+void PipelineView::setPluginManager(std::shared_ptr<nda::PluginManager> manager)
 {
     pluginManager_ = manager;
     refreshPluginLists();
 }
 
-void PipelineView::setPipeline(std::shared_ptr<NADE::ProcessingPipeline> pipeline)
+void PipelineView::setPipeline(std::shared_ptr<nda::ProcessingPipeline> pipeline)
 {
     pipeline_ = pipeline;
 }
@@ -479,22 +479,22 @@ void PipelineView::refreshPluginLists()
     audioSinkCombo->addItem("(None)");
 
     // Populate from plugin manager
-    auto sources = pluginManager_->getPluginsByType(NADE::PluginType::AudioSource);
+    auto sources = pluginManager_->getPluginsByType(nda::PluginType::AudioSource);
     for (const auto& plugin : sources) {
         audioSourceCombo->addItem(QString::fromStdString(plugin.info.name));
     }
 
-    auto bearers = pluginManager_->getPluginsByType(NADE::PluginType::Bearer);
+    auto bearers = pluginManager_->getPluginsByType(nda::PluginType::Bearer);
     for (const auto& plugin : bearers) {
         bearerCombo->addItem(QString::fromStdString(plugin.info.name));
     }
 
-    auto encryptors = pluginManager_->getPluginsByType(NADE::PluginType::Encryptor);
+    auto encryptors = pluginManager_->getPluginsByType(nda::PluginType::Encryptor);
     for (const auto& plugin : encryptors) {
         encryptorCombo->addItem(QString::fromStdString(plugin.info.name));
     }
 
-    auto sinks = pluginManager_->getPluginsByType(NADE::PluginType::AudioSink);
+    auto sinks = pluginManager_->getPluginsByType(nda::PluginType::AudioSink);
     for (const auto& plugin : sinks) {
         audioSinkCombo->addItem(QString::fromStdString(plugin.info.name));
     }

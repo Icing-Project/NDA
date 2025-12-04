@@ -1,6 +1,6 @@
-# NADE Python Plugins
+# NDA Python Plugins
 
-Python implementation of NADE audio plugins. These plugins provide the same functionality as the C++ versions but are easier to develop and modify.
+Python implementation of NDA audio plugins. These plugins provide the same functionality as the C++ versions but are easier to develop and modify.
 
 ## Available Plugins
 
@@ -167,7 +167,7 @@ Use Python plugins for:
 
 ## Integration with C++ Application
 
-The C++ NADE application can load Python plugins using:
+The C++ NDA application can load Python plugins using:
 1. **Python C API** - Embed Python interpreter
 2. **pybind11** - Modern C++/Python binding
 3. **IPC** - Inter-process communication via sockets
@@ -190,4 +190,4 @@ class PythonPluginLoader {
 
 ## License
 
-Same as NADE project license.
+Same as NDA project license.

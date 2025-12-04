@@ -52,7 +52,7 @@ class NullSinkPlugin(AudioSinkPlugin):
         return PluginInfo(
             name="Null Sink (Console Monitor)",
             version="1.0.0",
-            author="NADE Team",
+            author="Icing Project",
             description="Discards audio but shows metrics in console",
             plugin_type=PluginType.AUDIO_SINK,
             api_version=1

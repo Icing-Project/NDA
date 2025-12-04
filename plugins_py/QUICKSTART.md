@@ -1,6 +1,6 @@
-# Quick Start Guide - NADE Python Plugins
+# Quick Start Guide - NDA Python Plugins
 
-Get started with NADE Python plugins in 5 minutes!
+Get started with NDA Python plugins in 5 minutes!
 
 ## 1. Install Dependencies
 
@@ -58,17 +58,17 @@ loader.unload_all()
 
 ## 4. Use from C++ Application
 
-### Build NADE with Python Support
+### Build NDA with Python Support
 
 ```bash
 # Linux
 mkdir build && cd build
-cmake .. -DNADE_ENABLE_PYTHON=ON
+cmake .. -DNDA_ENABLE_PYTHON=ON
 make
 
 # Windows
 mkdir build && cd build
-cmake .. -DNADE_ENABLE_PYTHON=ON -G "Visual Studio 17 2022"
+cmake .. -DNDA_ENABLE_PYTHON=ON -G "Visual Studio 17 2022"
 cmake --build . --config Release
 ```
 

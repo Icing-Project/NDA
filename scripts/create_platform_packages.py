@@ -62,10 +62,10 @@ def create_linux_package(base_dir, linux_dir, build_dir, plugins_dir):
     (linux_dir / "docs").mkdir()
 
     # Copy executable
-    exe_src = build_dir / "NADE"
+    exe_src = build_dir / "NDA"
     if exe_src.exists():
-        shutil.copy2(exe_src, linux_dir / "bin" / "NADE")
-        os.chmod(linux_dir / "bin" / "NADE", 0o755)
+        shutil.copy2(exe_src, linux_dir / "bin" / "NDA")
+        os.chmod(linux_dir / "bin" / "NDA", 0o755)
         print("  ✓ Executable copied")
     else:
         print("  ✗ Executable not found!")
@@ -189,10 +189,10 @@ def copy_source_tree(base_dir, windows_dir):
 
 def create_linux_launcher(linux_dir):
     """Create Linux launcher script"""
-    launcher = linux_dir / "run_nade.sh"
+    launcher = linux_dir / "run_nda.sh"
     with open(launcher, 'w') as f:
         f.write('#!/bin/bash\n')
-        f.write('# NADE Linux Launcher\n\n')
+        f.write('# NDA Linux Launcher\n\n')
         f.write('cd "$(dirname "$0")"\n\n')
         f.write('# Add plugins to Python path\n')
         f.write('export PYTHONPATH="$PWD/plugins:$PYTHONPATH"\n\n')
@@ -201,21 +201,21 @@ def create_linux_launcher(linux_dir):
         f.write('    echo "Installing Python dependencies..."\n')
         f.write('    pip3 install --user -r requirements.txt\n')
         f.write('fi\n\n')
-        f.write('# Run NADE\n')
-        f.write('./bin/NADE\n')
+        f.write('# Run NDA\n')
+        f.write('./bin/NDA\n')
     os.chmod(launcher, 0o755)
     print("  ✓ Launcher created")
 
 def create_windows_launcher(windows_dir):
     """Create Windows launcher script"""
-    launcher = windows_dir / "run_nade.bat"
+    launcher = windows_dir / "run_nda.bat"
     with open(launcher, 'w') as f:
         f.write('@echo off\n')
-        f.write('REM NADE Windows Launcher\n\n')
+        f.write('REM NDA Windows Launcher\n\n')
         f.write('cd /d "%~dp0"\n\n')
         f.write('REM Check if built\n')
-        f.write('if not exist "bin\\NADE.exe" (\n')
-        f.write('    echo ERROR: NADE.exe not found!\n')
+        f.write('if not exist "bin\\NDA.exe" (\n')
+        f.write('    echo ERROR: NDA.exe not found!\n')
         f.write('    echo.\n')
         f.write('    echo Please build first:\n')
         f.write('    echo   1. cd build_scripts\n')
@@ -230,30 +230,30 @@ def create_windows_launcher(windows_dir):
         f.write('    echo Installing Python dependencies...\n')
         f.write('    pip install -r requirements.txt\n')
         f.write(')\n\n')
-        f.write('REM Run NADE\n')
-        f.write('bin\\NADE.exe\n')
+        f.write('REM Run NDA\n')
+        f.write('bin\\NDA.exe\n')
     print("  ✓ Launcher created")
 
 def create_linux_readme(linux_dir):
     """Create Linux-specific README"""
     readme = linux_dir / "README.md"
     with open(readme, 'w') as f:
-        f.write('# NADE - Linux Package\n\n')
+        f.write('# NDA - Linux Package\n\n')
         f.write('**Version 1.0.0**\n\n')
         f.write('Cross-platform audio encryption system - Linux build\n\n')
         f.write('## Quick Start\n\n')
         f.write('```bash\n')
         f.write('# Install dependencies\n')
         f.write('pip3 install --user -r requirements.txt\n\n')
-        f.write('# Run NADE\n')
-        f.write('./run_nade.sh\n')
+        f.write('# Run NDA\n')
+        f.write('./run_nda.sh\n')
         f.write('```\n\n')
         f.write('## Manual Installation\n\n')
         f.write('```bash\n')
         f.write('# Install Python packages\n')
         f.write('pip3 install --user sounddevice numpy\n\n')
         f.write('# Run executable\n')
-        f.write('./bin/NADE\n')
+        f.write('./bin/NDA\n')
         f.write('```\n\n')
         f.write('## Documentation\n\n')
         f.write('- **docs/USER_GUIDE.md** - Complete usage guide\n')
@@ -266,7 +266,7 @@ def create_windows_readme(windows_dir):
     """Create Windows-specific README"""
     readme = windows_dir / "README.md"
     with open(readme, 'w') as f:
-        f.write('# NADE - Windows Package\n\n')
+        f.write('# NDA - Windows Package\n\n')
         f.write('**Version 1.0.0**\n\n')
         f.write('Cross-platform audio encryption system - Windows build-ready package\n\n')
         f.write('## Build Instructions\n\n')
@@ -286,18 +286,18 @@ def create_windows_readme(windows_dir):
         f.write('cd build_scripts\n')
         f.write('deploy_windows.bat\n')
         f.write('```\n\n')
-        f.write('This will copy NADE.exe, Qt DLLs, Python DLL, and OpenSSL DLLs to bin/ folder.\n\n')
+        f.write('This will copy NDA.exe, Qt DLLs, Python DLL, and OpenSSL DLLs to bin/ folder.\n\n')
         f.write('### Run\n\n')
         f.write('```cmd\n')
         f.write('pip install -r requirements.txt\n')
-        f.write('run_nade.bat\n')
+        f.write('run_nda.bat\n')
         f.write('```\n\n')
         f.write('## Documentation\n\n')
         f.write('- **docs/BUILD_WINDOWS.md** - Detailed build instructions\n')
         f.write('- **docs/WINDOWS_README.md** - Windows setup guide\n')
         f.write('- **docs/USER_GUIDE.md** - Complete usage guide\n\n')
         f.write('## Pre-built Binary\n\n')
-        f.write('If you have a pre-built NADE.exe, place it in bin/ folder along with required DLLs.\n\n')
+        f.write('If you have a pre-built NDA.exe, place it in bin/ folder along with required DLLs.\n\n')
         f.write('## Support\n\n')
         f.write('See docs/BUILD_WINDOWS.md for troubleshooting and detailed build instructions.\n')
     print("  ✓ README created")
@@ -306,7 +306,7 @@ def create_version_file(dest_dir, platform):
     """Create version file"""
     version = dest_dir / "VERSION.txt"
     with open(version, 'w') as f:
-        f.write('NADE - Plugin-Based Audio Encryption System\n')
+        f.write('NDA - Plugin-Based Audio Encryption System\n')
         f.write('Version: 1.0.0\n')
         f.write(f'Platform: {platform}\n')
         f.write('Build Date: October 2025\n')

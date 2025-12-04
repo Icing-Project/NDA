@@ -4,7 +4,7 @@
 #include "BasePlugin.h"
 #include "audio/AudioBuffer.h"
 
-namespace NADE {
+namespace nda {
 
 class AudioSinkPlugin : public virtual BasePlugin {
 public:
@@ -27,6 +27,6 @@ public:
     virtual int getAvailableSpace() const = 0;
 };
 
-} // namespace NADE
+} // namespace nda
 
 #endif // AUDIOSINKPLUGIN_H
