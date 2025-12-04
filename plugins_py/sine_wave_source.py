@@ -48,7 +48,7 @@ class SineWaveSourcePlugin(AudioSourcePlugin):
         return PluginInfo(
             name="Sine Wave Generator",
             version="1.0.0",
-            author="NADE Team",
+            author="Icing Project",
             description="Generates a 440Hz sine wave (A4 note) for testing",
             plugin_type=PluginType.AUDIO_SOURCE,
             api_version=1

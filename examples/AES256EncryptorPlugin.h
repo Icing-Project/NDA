@@ -4,7 +4,7 @@
 #include "plugins/EncryptorPlugin.h"
 #include <vector>
 
-namespace NADE {
+namespace nda {
 
 class AES256EncryptorPlugin : public EncryptorPlugin {
 public:
@@ -48,8 +48,8 @@ private:
     void* cryptoContext_; // OpenSSL context
 };
 
-} // namespace NADE
+} // namespace nda
 
-NADE_DECLARE_PLUGIN(NADE::AES256EncryptorPlugin)
+NDA_DECLARE_PLUGIN(nda::AES256EncryptorPlugin)
 
 #endif // AES256ENCRYPTORPLUGIN_H

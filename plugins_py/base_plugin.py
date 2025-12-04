@@ -1,5 +1,5 @@
 """
-NADE Plugin Base Classes for Python
+NDA Plugin Base Classes for Python
 """
 
 from abc import ABC, abstractmethod

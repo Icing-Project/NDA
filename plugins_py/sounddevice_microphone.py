@@ -112,7 +112,7 @@ class SoundDeviceMicrophonePlugin(AudioSourcePlugin):
         return PluginInfo(
             name="SoundDevice Microphone",
             version="1.0.0",
-            author="NADE Team",
+            author="Icing Project",
             description="Captures audio from microphone using sounddevice library",
             plugin_type=PluginType.AUDIO_SOURCE,
             api_version=1

@@ -11,7 +11,7 @@
 #include <thread>
 #include <atomic>
 
-namespace NADE {
+namespace nda {
 
 class ProcessingPipeline {
 public:
@@ -54,6 +54,6 @@ private:
     uint64_t processedSamples_;
 };
 
-} // namespace NADE
+} // namespace nda
 
 #endif // PROCESSINGPIPELINE_H

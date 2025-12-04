@@ -4,7 +4,7 @@
 #include "plugins/BearerPlugin.h"
 #include <string>
 
-namespace NADE {
+namespace nda {
 
 class UDPBearerPlugin : public BearerPlugin {
 public:
@@ -65,8 +65,8 @@ private:
     uint64_t packetsDropped_;
 };
 
-} // namespace NADE
+} // namespace nda
 
-NADE_DECLARE_PLUGIN(NADE::UDPBearerPlugin)
+NDA_DECLARE_PLUGIN(nda::UDPBearerPlugin)
 
 #endif // UDPBEARERPLUGIN_H

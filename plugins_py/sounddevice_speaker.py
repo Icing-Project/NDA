@@ -116,7 +116,7 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
         return PluginInfo(
             name="SoundDevice Speaker",
             version="1.0.0",
-            author="NADE Team",
+            author="Icing Project",
             description="Plays audio through system speakers using sounddevice",
             plugin_type=PluginType.AUDIO_SINK,
             api_version=1

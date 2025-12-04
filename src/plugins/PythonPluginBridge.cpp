@@ -2,9 +2,9 @@
 #include <iostream>
 #include <sstream>
 
-#ifdef NADE_ENABLE_PYTHON
+#ifdef NDA_ENABLE_PYTHON
 
-namespace NADE {
+namespace nda {
 
 // Static initialization
 bool PythonPluginBridge::pythonInitialized_ = false;
@@ -629,6 +629,6 @@ void PythonPluginBridge::copyFromPythonBuffer(PyObject* pyBuffer, AudioBuffer& b
     Py_DECREF(pyData);
 }
 
-} // namespace NADE
+} // namespace nda
 
-#endif // NADE_ENABLE_PYTHON
+#endif // NDA_ENABLE_PYTHON

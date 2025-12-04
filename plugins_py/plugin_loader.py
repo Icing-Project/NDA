@@ -1,5 +1,5 @@
 """
-Python Plugin Loader for NADE
+Python Plugin Loader for NDA
 Dynamically loads Python plugins
 """
 

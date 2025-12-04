@@ -3,7 +3,7 @@
 #include <pulse/error.h>
 #include <cstring>
 
-namespace NADE {
+namespace nda {
 
 class LinuxMicrophonePlugin : public AudioSourcePlugin {
 public:
@@ -44,7 +44,7 @@ public:
         int error;
         pa_s_ = pa_simple_new(
             nullptr,                    // Use default server
-            "NADE",                     // Application name
+            "NDA",                     // Application name
             PA_STREAM_RECORD,           // Direction: record
             nullptr,                    // Use default device
             "Audio Source",             // Stream description
@@ -76,10 +76,10 @@ public:
         return {
             "Linux Microphone (PulseAudio)",
             "1.0.0",
-            "NADE Team",
+            "Icing Project",
             "Captures audio from default microphone using PulseAudio",
             PluginType::AudioSource,
-            NADE_PLUGIN_API_VERSION
+            NDA_PLUGIN_API_VERSION
         };
     }
 
@@ -152,7 +152,7 @@ private:
     pa_simple* pa_s_;
 };
 
-} // namespace NADE
+} // namespace nda
 
 // Export the plugin
-NADE_DECLARE_PLUGIN(NADE::LinuxMicrophonePlugin)
+NDA_DECLARE_PLUGIN(nda::LinuxMicrophonePlugin)

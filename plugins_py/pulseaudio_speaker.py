@@ -106,7 +106,7 @@ class PulseAudioSpeakerPlugin(AudioSinkPlugin):
         return PluginInfo(
             name="PulseAudio Speaker Output",
             version="1.0.0",
-            author="NADE Team",
+            author="Icing Project",
             description="Plays audio through system speakers using PulseAudio",
             plugin_type=PluginType.AUDIO_SINK,
             api_version=1

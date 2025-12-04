@@ -18,8 +18,8 @@ public:
     explicit PipelineView(QWidget *parent = nullptr);
     ~PipelineView();
 
-    void setPluginManager(std::shared_ptr<NADE::PluginManager> manager);
-    void setPipeline(std::shared_ptr<NADE::ProcessingPipeline> pipeline);
+    void setPluginManager(std::shared_ptr<nda::PluginManager> manager);
+    void setPipeline(std::shared_ptr<nda::ProcessingPipeline> pipeline);
 
 signals:
     void pipelineStarted();
@@ -61,14 +61,14 @@ private:
     QLabel *throughputLabel;
 
     // Pipeline components
-    std::shared_ptr<NADE::PluginManager> pluginManager_;
-    std::shared_ptr<NADE::ProcessingPipeline> pipeline_;
+    std::shared_ptr<nda::PluginManager> pluginManager_;
+    std::shared_ptr<nda::ProcessingPipeline> pipeline_;
 
     // Selected plugins
-    std::shared_ptr<NADE::AudioSourcePlugin> selectedSource_;
-    std::shared_ptr<NADE::BearerPlugin> selectedBearer_;
-    std::shared_ptr<NADE::EncryptorPlugin> selectedEncryptor_;
-    std::shared_ptr<NADE::AudioSinkPlugin> selectedSink_;
+    std::shared_ptr<nda::AudioSourcePlugin> selectedSource_;
+    std::shared_ptr<nda::BearerPlugin> selectedBearer_;
+    std::shared_ptr<nda::EncryptorPlugin> selectedEncryptor_;
+    std::shared_ptr<nda::AudioSinkPlugin> selectedSink_;
 };
 
 #endif // PIPELINEVIEW_H

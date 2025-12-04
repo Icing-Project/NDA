@@ -3,7 +3,7 @@
 
 #include "plugins/AudioSourcePlugin.h"
 
-namespace NADE {
+namespace nda {
 
 class MicrophoneSourcePlugin : public AudioSourcePlugin {
 public:
@@ -37,9 +37,9 @@ private:
     void* audioDevice_; // Platform-specific device handle
 };
 
-} // namespace NADE
+} // namespace nda
 
 // Export plugin
-NADE_DECLARE_PLUGIN(NADE::MicrophoneSourcePlugin)
+NDA_DECLARE_PLUGIN(nda::MicrophoneSourcePlugin)
 
 #endif // MICROPHONESOURCEPLUGIN_H

@@ -5,7 +5,7 @@
 #include "audio/AudioBuffer.h"
 #include <functional>
 
-namespace NADE {
+namespace nda {
 
 // Callback for audio data from source
 using AudioSourceCallback = std::function<void(const AudioBuffer& buffer)>;
@@ -29,6 +29,6 @@ public:
     virtual void setChannels(int channels) = 0;
 };
 
-} // namespace NADE
+} // namespace nda
 
 #endif // AUDIOSOURCEPLUGIN_H

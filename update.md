@@ -1,4 +1,4 @@
-# NADE Project Updates
+# NDA Project Updates
 
 ## 2025-10-16: Repository Structure Cleanup
 
@@ -27,8 +27,8 @@ Reorganized the entire repository structure to eliminate clutter and improve org
 - create_platform_packages.py
 
 **Distribution Packages → packages/**
-- NADE-v1.0.0-Linux-x64.tar.gz
-- NADE-v1.0.0-Windows-Source.tar.gz
+- NDA-v1.0.0-Linux-x64.tar.gz
+- NDA-v1.0.0-Windows-Source.tar.gz
 - readytoship_linux/ → packages/linux/
 - readytoship_windows/ → packages/windows/
 
@@ -45,8 +45,8 @@ NDA/
 ├── packages/                # Distribution packages
 │   ├── linux/              # Linux package contents
 │   ├── windows/            # Windows package contents
-│   ├── NADE-v1.0.0-Linux-x64.tar.gz
-│   └── NADE-v1.0.0-Windows-Source.tar.gz
+│   ├── NDA-v1.0.0-Linux-x64.tar.gz
+│   └── NDA-v1.0.0-Windows-Source.tar.gz
 ├── src/                     # C++ source code
 ├── include/                 # Header files
 ├── plugins_py/              # Python plugins (10 files)

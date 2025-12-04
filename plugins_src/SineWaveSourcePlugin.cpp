@@ -1,7 +1,7 @@
 #include "plugins/AudioSourcePlugin.h"
 #include <cmath>
 
-namespace NADE {
+namespace nda {
 
 class SineWaveSourcePlugin : public AudioSourcePlugin {
 public:
@@ -46,10 +46,10 @@ public:
         return {
             "Sine Wave Generator",
             "1.0.0",
-            "NADE Team",
+            "Icing Project",
             "Generates a 440Hz sine wave (A4 note) for testing",
             PluginType::AudioSource,
-            NADE_PLUGIN_API_VERSION
+            NDA_PLUGIN_API_VERSION
         };
     }
 
@@ -126,7 +126,7 @@ private:
     AudioSourceCallback callback_;
 };
 
-} // namespace NADE
+} // namespace nda
 
 // Export the plugin
-NADE_DECLARE_PLUGIN(NADE::SineWaveSourcePlugin)
+NDA_DECLARE_PLUGIN(nda::SineWaveSourcePlugin)

@@ -9,11 +9,11 @@
 #include <dlfcn.h>
 #endif
 
-#ifdef NADE_ENABLE_PYTHON
+#ifdef NDA_ENABLE_PYTHON
 #include "plugins/PythonPluginBridge.h"
 #endif
 
-namespace NADE {
+namespace nda {
 
 PluginManager::PluginManager()
 {
@@ -31,7 +31,7 @@ bool PluginManager::loadPlugin(const std::string& path)
 
     // Check if it's a Python plugin
     if (extension == ".py") {
-#ifdef NADE_ENABLE_PYTHON
+#ifdef NDA_ENABLE_PYTHON
         return loadPythonPlugin(path);
 #else
         std::cerr << "[PluginManager] Python support not enabled. Cannot load: " << path << std::endl;
@@ -112,7 +112,7 @@ bool PluginManager::loadCppPlugin(const std::string& path)
     return true;
 }
 
-#ifdef NADE_ENABLE_PYTHON
+#ifdef NDA_ENABLE_PYTHON
 bool PluginManager::loadPythonPlugin(const std::string& path)
 {
     std::filesystem::path pluginPath(path);
@@ -209,7 +209,7 @@ std::vector<std::string> PluginManager::scanPluginDirectory(const std::string& d
 
                 // Check for Python plugins
                 bool isPythonPlugin = false;
-#ifdef NADE_ENABLE_PYTHON
+#ifdef NDA_ENABLE_PYTHON
                 bool isSetupFile = (filename.size() >= 6 && filename.substr(0, 6) == "setup_");
                 isPythonPlugin = (ext == ".py" &&
                                  filename != "base_plugin.py" &&
@@ -303,7 +303,7 @@ bool PluginManager::validatePlugin(BasePlugin* plugin)
     }
 
     PluginInfo info = plugin->getInfo();
-    if (info.apiVersion != NADE_PLUGIN_API_VERSION) {
+    if (info.apiVersion != NDA_PLUGIN_API_VERSION) {
         return false;
     }
 
@@ -330,4 +330,4 @@ void PluginManager::unloadLibrary(void* handle)
 #endif
 }
 
-} // namespace NADE
+} // namespace nda
