@@ -10,12 +10,12 @@
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
-    setWindowTitle("NADE - Plugin-Based Audio Encryption System");
+    setWindowTitle("NDA - Plugin-Based Audio Encryption System");
     setMinimumSize(1200, 800);
 
     // Create core components
-    pluginManager_ = std::make_shared<NADE::PluginManager>();
-    pipeline_ = std::make_shared<NADE::ProcessingPipeline>();
+    pluginManager_ = std::make_shared<nda::PluginManager>();
+    pipeline_ = std::make_shared<nda::ProcessingPipeline>();
 
     setupUI();
     createMenus();

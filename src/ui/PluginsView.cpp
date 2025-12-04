@@ -103,7 +103,7 @@ void PluginsView::onPluginSelected(QListWidgetItem *item)
             "Type: Audio Source\n"
             "Version: 1.0.0\n"
             "Status: Active\n"
-            "API: NADE Plugin v1.0"
+            "API: NDA Plugin v1.0"
         );
     }
 }

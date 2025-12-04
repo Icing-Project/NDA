@@ -1,5 +1,5 @@
 @echo off
-REM NADE Windows Build Script
+REM NDA Windows Build Script
 REM Requirements:
 REM   - CMake 3.16+
 REM   - Qt6 (with MSVC)
@@ -8,7 +8,7 @@ REM   - Visual Studio 2019+ or Build Tools
 REM   - OpenSSL
 
 echo ================================================
-echo NADE - Windows Build Script
+echo NDA - Windows Build Script
 echo ================================================
 echo.
 
@@ -39,7 +39,7 @@ if %ERRORLEVEL% NEQ 0 (
 )
 
 echo.
-echo Building NADE...
+echo Building NDA...
 cmake --build . --config Release
 
 if %ERRORLEVEL% NEQ 0 (
@@ -53,7 +53,7 @@ echo ================================================
 echo Build completed successfully!
 echo ================================================
 echo.
-echo Executable: build\Release\NADE.exe
+echo Executable: build\Release\NDA.exe
 echo.
 echo To install Python dependencies:
 echo   pip install -r requirements.txt

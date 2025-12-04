@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(NADE VERSION 1.0.0 LANGUAGES CXX)
+project(NDA VERSION 1.0.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -8,7 +8,7 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
 # Option to enable Python plugin support
-option(NADE_ENABLE_PYTHON "Enable Python plugin support" ON)
+option(NDA_ENABLE_PYTHON "Enable Python plugin support" ON)
 
 # Qt6 packages
 find_package(Qt6 REQUIRED COMPONENTS Core Widgets Gui Network)
@@ -17,17 +17,17 @@ find_package(Qt6 REQUIRED COMPONENTS Core Widgets Gui Network)
 find_package(OpenSSL REQUIRED)
 
 # Find Python and NumPy if Python support is enabled
-if(NADE_ENABLE_PYTHON)
+if(NDA_ENABLE_PYTHON)
     find_package(Python3 COMPONENTS Interpreter Development NumPy)
     if(Python3_FOUND)
         message(STATUS "Python support enabled")
         message(STATUS "  Python version: ${Python3_VERSION}")
         message(STATUS "  Python include dirs: ${Python3_INCLUDE_DIRS}")
         message(STATUS "  NumPy include dirs: ${Python3_NumPy_INCLUDE_DIRS}")
-        add_compile_definitions(NADE_ENABLE_PYTHON)
+        add_compile_definitions(NDA_ENABLE_PYTHON)
     else()
         message(WARNING "Python3 not found, Python plugin support disabled")
-        set(NADE_ENABLE_PYTHON OFF)
+        set(NDA_ENABLE_PYTHON OFF)
     endif()
 endif()
 
@@ -53,7 +53,7 @@ set(SOURCES
 )
 
 # Add Python bridge if enabled
-if(NADE_ENABLE_PYTHON)
+if(NDA_ENABLE_PYTHON)
     list(APPEND SOURCES src/plugins/PythonPluginBridge.cpp)
 endif()
 
@@ -82,7 +82,7 @@ set(HEADERS
 )
 
 # Add Python bridge header if enabled
-if(NADE_ENABLE_PYTHON)
+if(NDA_ENABLE_PYTHON)
     list(APPEND HEADERS include/plugins/PythonPluginBridge.h)
 endif()
 
@@ -100,7 +100,7 @@ target_link_libraries(${PROJECT_NAME}
 )
 
 # Link Python libraries if enabled
-if(NADE_ENABLE_PYTHON)
+if(NDA_ENABLE_PYTHON)
     target_include_directories(${PROJECT_NAME} PRIVATE
         ${Python3_INCLUDE_DIRS}
         ${Python3_NumPy_INCLUDE_DIRS}

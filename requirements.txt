@@ -1,4 +1,4 @@
-# NADE Python Plugin Dependencies
+# NDA Python Plugin Dependencies
 # Install with: pip install -r requirements.txt
 
 # Audio I/O (cross-platform)

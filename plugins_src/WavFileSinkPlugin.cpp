@@ -5,7 +5,7 @@
 #include <iostream>
 #include <chrono>
 
-namespace NADE {
+namespace nda {
 
 class WavFileSinkPlugin : public AudioSinkPlugin {
 public:
@@ -97,10 +97,10 @@ public:
         return {
             "WAV File Recorder",
             "1.0.0",
-            "NADE Team",
+            "Icing Project",
             "Records audio to WAV file (32-bit float PCM)",
             PluginType::AudioSink,
-            NADE_PLUGIN_API_VERSION
+            NDA_PLUGIN_API_VERSION
         };
     }
 
@@ -227,7 +227,7 @@ private:
     std::string customFilename_;
 };
 
-} // namespace NADE
+} // namespace nda
 
 // Export the plugin
-NADE_DECLARE_PLUGIN(NADE::WavFileSinkPlugin)
+NDA_DECLARE_PLUGIN(nda::WavFileSinkPlugin)

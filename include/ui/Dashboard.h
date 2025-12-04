@@ -17,7 +17,7 @@ public:
     explicit Dashboard(QWidget *parent = nullptr);
     ~Dashboard();
 
-    void setPipeline(std::shared_ptr<NADE::ProcessingPipeline> pipeline);
+    void setPipeline(std::shared_ptr<nda::ProcessingPipeline> pipeline);
     void updatePipelineState();
 
 signals:
@@ -51,7 +51,7 @@ private:
     bool isStreaming;
 
     // Pipeline reference
-    std::shared_ptr<NADE::ProcessingPipeline> pipeline_;
+    std::shared_ptr<nda::ProcessingPipeline> pipeline_;
 };
 
 #endif // DASHBOARD_H

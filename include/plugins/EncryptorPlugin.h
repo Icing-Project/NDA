@@ -5,7 +5,7 @@
 #include <vector>
 #include <cstdint>
 
-namespace NADE {
+namespace nda {
 
 enum class EncryptionAlgorithm {
     AES_128_GCM,
@@ -45,6 +45,6 @@ public:
     virtual bool isHardwareAccelerated() const = 0;
 };
 
-} // namespace NADE
+} // namespace nda
 
 #endif // ENCRYPTORPLUGIN_H

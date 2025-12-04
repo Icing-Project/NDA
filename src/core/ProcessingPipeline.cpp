@@ -4,7 +4,7 @@
 #include <cstring>
 #include <iostream>
 
-namespace NADE {
+namespace nda {
 
 ProcessingPipeline::ProcessingPipeline()
     : isRunning_(false), processingThread_(nullptr), processedSamples_(0)
@@ -310,4 +310,4 @@ void ProcessingPipeline::processAudioFrame()
     processedSamples_ += workBuffer_.getFrameCount();
 }
 
-} // namespace NADE
+} // namespace nda

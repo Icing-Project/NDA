@@ -1,5 +1,5 @@
 """
-NADE Python Plugins Package
+NDA Python Plugins Package
 """
 
 from .base_plugin import (

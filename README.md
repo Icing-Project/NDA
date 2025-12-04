@@ -1,10 +1,10 @@
-# NADE Desktop Application
+# NDA Desktop Application
 
 Professional Audio Encryption Bridge System - **C++/Qt6 Implementation**
 
 ## Overview
 
-NADE Desktop is a high-performance, Windows-native (but Linux compatible, obviously) audio processing system designed to provide real-time encryption for various audio communication channels. Built with modern C++17/20 and Qt6 for maximum performance, it leverages Windows audio APIs (WASAPI/ASIO) for ultra-low latency while maintaining a flexible plugin architecture for extensibility.
+NDA Desktop is a high-performance, Windows-native (but Linux compatible, obviously) audio processing system designed to provide real-time encryption for various audio communication channels. Built with modern C++17/20 and Qt6 for maximum performance, it leverages Windows audio APIs (WASAPI/ASIO) for ultra-low latency while maintaining a flexible plugin architecture for extensibility.
 
 ## Key Features
 
@@ -80,7 +80,7 @@ sudo apt-get install -y \
 
 ### 2. Install Python plugin runtime dependencies
 
-`CMakeLists.txt` enables `NADE_ENABLE_PYTHON=ON`, so the UI auto-load feature expects the Python plugins in `plugins_py/` plus their dependencies. Either create a virtual environment or allow user installs (Ubuntu uses PEP 668 protections by default):
+`CMakeLists.txt` enables `NDA_ENABLE_PYTHON=ON`, so the UI auto-load feature expects the Python plugins in `plugins_py/` plus their dependencies. Either create a virtual environment or allow user installs (Ubuntu uses PEP 668 protections by default):
 
 ```bash
 # Option A: virtual environment (recommended)
@@ -93,7 +93,7 @@ pip install -r requirements.txt
 pip3 install --user --break-system-packages -r requirements.txt
 ```
 
-If you do not need Python plugins, configure with `-DNADE_ENABLE_PYTHON=OFF` and skip these packages. The UI plugin auto-loader will be disabled in that configuration.
+If you do not need Python plugins, configure with `-DNDA_ENABLE_PYTHON=OFF` and skip these packages. The UI plugin auto-loader will be disabled in that configuration.
 
 ### 3. Configure, build, and run
 
@@ -103,7 +103,7 @@ cmake -S . -B build
 cmake --build build -j$(nproc)
 
 # Launch the Qt UI (from the project root)
-./build/NADE
+./build/NDA
 ```
 
 At startup the application will attempt to auto-load every plugin in `plugins_py/`. Audio capture/playback plugins require `sounddevice` (provided via `requirements.txt`) and the system PortAudio/PyAudio libs installed in step 1. If you see “[PortAudio library not found]”, re-check the `portaudio19-dev` and `python3-pyaudio` packages.
@@ -201,7 +201,7 @@ Main Thread (Qt GUI)
 
 ### Basic Operation
 
-1. Launch NADE Desktop
+1. Launch NDA Desktop
 2. **Dashboard Tab**: View stream status, audio meters, and performance metrics
 3. **Audio Devices Tab**: Select input/output devices and configure sample rate/buffer size
 4. **Encryption Tab**: Generate or import encryption keys, select algorithm

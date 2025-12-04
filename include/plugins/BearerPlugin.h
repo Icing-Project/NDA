@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <functional>
 
-namespace NADE {
+namespace nda {
 
 // Network packet structure
 struct Packet {
@@ -47,6 +47,6 @@ public:
     virtual uint64_t getBytesReceived() const = 0;
 };
 
-} // namespace NADE
+} // namespace nda
 
 #endif // BEARERPLUGIN_H

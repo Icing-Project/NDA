@@ -1,10 +1,10 @@
-# ✅ NADE DEPLOYMENT COMPLETE
+# ✅ NDA DEPLOYMENT COMPLETE
 
 ## 📦 Ready-to-Ship Package Location
 
 **Primary Package:** `/home/bartosz/delivery/NDA/readytoship/`
 
-This folder contains everything needed to distribute NADE on Windows, Linux, and Mac.
+This folder contains everything needed to distribute NDA on Windows, Linux, and Mac.
 
 ---
 
@@ -30,7 +30,7 @@ This folder contains everything needed to distribute NADE on Windows, Linux, and
 ```
 readytoship/
 ├── bin/                          # Executables
-│   └── NADE                      # Linux/Mac (629KB)
+│   └── NDA                      # Linux/Mac (629KB)
 ├── plugins/                      # Audio plugins (10 files)
 │   ├── sounddevice_microphone.py # ⭐ Recommended
 │   ├── sounddevice_speaker.py    # ⭐ Recommended
@@ -41,8 +41,8 @@ readytoship/
 │   ├── WINDOWS_README.md
 │   ├── BUILD_WINDOWS.md
 │   └── ...
-├── NADE.sh                       # Linux/Mac launcher
-├── NADE.bat                      # Windows launcher
+├── NDA.sh                       # Linux/Mac launcher
+├── NDA.bat                      # Windows launcher
 ├── README.md                     # Main documentation
 ├── requirements.txt              # Python dependencies
 └── PACKAGE_INFO.txt             # Deployment checklist
@@ -55,7 +55,7 @@ readytoship/
 ### For Linux/Mac
 ```bash
 cd /home/bartosz/delivery/NDA
-tar -czf NADE-v1.0.0-Linux.tar.gz readytoship/
+tar -czf NDA-v1.0.0-Linux.tar.gz readytoship/
 ```
 
 ### For Windows (on Windows machine)
@@ -66,7 +66,7 @@ build_windows.bat
 deploy_windows.bat
 
 # 3. Package:
-7z a NADE-v1.0.0-Windows.zip readytoship\*
+7z a NDA-v1.0.0-Windows.zip readytoship\*
 ```
 
 ---
@@ -150,14 +150,14 @@ This will:
 ```bash
 cd readytoship
 pip3 install -r requirements.txt
-./NADE.sh
+./NDA.sh
 ```
 
 ### Quick Test (Windows)
 ```cmd
 cd readytoship
 pip install -r requirements.txt
-NADE.bat
+NDA.bat
 ```
 
 ### Functional Test
@@ -193,15 +193,15 @@ NADE.bat
 ### For Immediate Distribution (Linux/Mac)
 ```bash
 cd /home/bartosz/delivery/NDA
-tar -czf NADE-v1.0.0-Linux.tar.gz readytoship/
-# Upload NADE-v1.0.0-Linux.tar.gz
+tar -czf NDA-v1.0.0-Linux.tar.gz readytoship/
+# Upload NDA-v1.0.0-Linux.tar.gz
 ```
 
 ### For Windows Distribution
 1. Transfer NDA folder to Windows PC
 2. Follow Windows build steps above
-3. Package with: `7z a NADE-v1.0.0-Windows.zip readytoship\*`
-4. Upload NADE-v1.0.0-Windows.zip
+3. Package with: `7z a NDA-v1.0.0-Windows.zip readytoship\*`
+4. Upload NDA-v1.0.0-Windows.zip
 
 ### For Both Platforms
 Create installer packages (optional):

@@ -3,7 +3,7 @@
 #include <pulse/error.h>
 #include <vector>
 
-namespace NADE {
+namespace nda {
 
 class LinuxSpeakerPlugin : public AudioSinkPlugin {
 public:
@@ -45,7 +45,7 @@ public:
         int error;
         pa_s_ = pa_simple_new(
             nullptr,                    // Use default server
-            "NADE",                     // Application name
+            "NDA",                     // Application name
             PA_STREAM_PLAYBACK,         // Direction: playback
             nullptr,                    // Use default device
             "Audio Sink",               // Stream description
@@ -78,10 +78,10 @@ public:
         return {
             "Linux Speakers (PulseAudio)",
             "1.0.0",
-            "NADE Team",
+            "Icing Project",
             "Outputs audio to default speakers using PulseAudio",
             PluginType::AudioSink,
-            NADE_PLUGIN_API_VERSION
+            NDA_PLUGIN_API_VERSION
         };
     }
 
@@ -154,7 +154,7 @@ private:
     pa_simple* pa_s_;
 };
 
-} // namespace NADE
+} // namespace nda
 
 // Export the plugin
-NADE_DECLARE_PLUGIN(NADE::LinuxSpeakerPlugin)
+NDA_DECLARE_PLUGIN(nda::LinuxSpeakerPlugin)

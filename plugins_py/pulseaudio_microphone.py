@@ -142,7 +142,7 @@ class PulseAudioMicrophonePlugin(AudioSourcePlugin):
         return PluginInfo(
             name="PulseAudio Microphone",
             version="2.0.0",
-            author="NADE Team",
+            author="Icing Project",
             description="Captures audio from system microphone using PulseAudio (callback mode)",
             plugin_type=PluginType.AUDIO_SOURCE,
             api_version=1

@@ -6,7 +6,7 @@
 #include "AudioSinkPlugin.h"
 
 // Only compile if Python support is enabled
-#ifdef NADE_ENABLE_PYTHON
+#ifdef NDA_ENABLE_PYTHON
 
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
@@ -15,13 +15,13 @@
 #define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
 #include <numpy/arrayobject.h>
 
-namespace NADE {
+namespace nda {
 
 /**
  * @brief Bridge class to load and use Python plugins from C++
  *
  * This class wraps Python plugins and exposes them through the
- * standard NADE plugin interface. It handles:
+ * standard NDA plugin interface. It handles:
  * - Loading Python modules
  * - Converting between C++ and Python data structures
  * - Managing Python interpreter lifecycle
@@ -107,8 +107,8 @@ public:
     }
 };
 
-} // namespace NADE
+} // namespace nda
 
-#endif // NADE_ENABLE_PYTHON
+#endif // NDA_ENABLE_PYTHON
 
 #endif // PYTHONPLUGINBRIDGE_H

@@ -37,8 +37,8 @@ private:
     SettingsView *settingsView;
 
     // Core components
-    std::shared_ptr<NADE::PluginManager> pluginManager_;
-    std::shared_ptr<NADE::ProcessingPipeline> pipeline_;
+    std::shared_ptr<nda::PluginManager> pluginManager_;
+    std::shared_ptr<nda::ProcessingPipeline> pipeline_;
 };
 
 #endif // MAINWINDOW_H
