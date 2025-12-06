@@ -108,6 +108,74 @@ cmake --build build -j$(nproc)
 
 At startup the application will attempt to auto-load every plugin in `plugins_py/`. Audio capture/playback plugins require `sounddevice` (provided via `requirements.txt`) and the system PortAudio/PyAudio libs installed in step 1. If you see “[PortAudio library not found]”, re-check the `portaudio19-dev` and `python3-pyaudio` packages.
 
+### 4. Ubuntu one-shot compile script
+
+If you prefer a single script that installs dependencies, compiles NDA, and runs it on Ubuntu, save the following as `scripts/build_ubuntu.sh` in the repo root and make it executable with `chmod +x scripts/build_ubuntu.sh`:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "==> Installing Ubuntu build dependencies (requires sudo)..."
+sudo apt-get update
+sudo apt-get install -y \
+    build-essential \
+    cmake \
+    qt6-base-dev \
+    qt6-base-dev-tools \
+    libqt6opengl6-dev \
+    libssl-dev \
+    python3 \
+    python3-dev \
+    python3-pip \
+    python3-numpy \
+    portaudio19-dev \
+    python3-pyaudio \
+    libgl1-mesa-dev \
+    git
+
+echo "==> Installing Python plugin dependencies (user scope)..."
+if command -v pip3 >/dev/null 2>&1; then
+    pip3 install --user --break-system-packages -r requirements.txt
+fi
+
+echo "==> Configuring CMake build..."
+/usr/bin/cmake -S . -B build
+
+echo "==> Building NDA..."
+/usr/bin/cmake --build build -j"$(nproc)"
+
+echo "==> Launching NDA..."
+./build/NDA
+```
+
+Then run:
+
+```bash
+./scripts/build_ubuntu.sh
+```
+
+### 5. Ubuntu dev loop script
+
+For frequent compile/run cycles during development, use the dedicated dev script (assumes you have already run the one-shot script or installed dependencies manually):
+
+```bash
+chmod +x scripts/dev_ubuntu.sh
+./scripts/dev_ubuntu.sh
+```
+
+By default this:
+- Configures CMake once into `build/` with `CMAKE_BUILD_TYPE=Debug`.
+- Rebuilds incrementally with all available cores.
+- Runs `./build/NDA` after a successful build.
+
+You can tune behaviour with environment variables:
+
+```bash
+# Use a different build directory and build type, and skip auto-run
+BUILD_DIR=build-debug BUILD_TYPE=Debug RUN_AFTER_BUILD=0 ./scripts/dev_ubuntu.sh
+```
+
 ## Project Structure
 
 ```
