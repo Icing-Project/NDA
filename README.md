@@ -64,6 +64,7 @@ sudo apt-get install -y \
     cmake \
     qt6-base-dev \
     qt6-base-dev-tools \
+    libxkbcommon-dev \
     libqt6opengl6-dev \
     libssl-dev \
     python3 \
@@ -123,6 +124,7 @@ sudo apt-get install -y \
     cmake \
     qt6-base-dev \
     qt6-base-dev-tools \
+    libxkbcommon-dev \
     libqt6opengl6-dev \
     libssl-dev \
     python3 \

@@ -10,6 +10,8 @@
 #include <vector>
 #include <thread>
 #include <atomic>
+#include <deque>
+#include <mutex>
 
 namespace NADE {
 
@@ -41,6 +43,11 @@ public:
 private:
     void processingThread();
     void processAudioFrame();
+    bool drainIncomingAudio();
+    void handleReceivedPacket(const Packet& packet);
+
+    std::vector<uint8_t> serializeAudioBuffer(const AudioBuffer& buffer) const;
+    bool deserializeAudioBuffer(const std::vector<uint8_t>& data, int channels, AudioBuffer& buffer) const;
 
     std::shared_ptr<AudioSourcePlugin> audioSource_;
     std::shared_ptr<BearerPlugin> bearer_;
@@ -52,6 +59,9 @@ private:
 
     AudioBuffer workBuffer_;
     uint64_t processedSamples_;
+
+    std::deque<AudioBuffer> incomingAudio_;
+    mutable std::mutex incomingMutex_;
 };
 
 } // namespace NADE

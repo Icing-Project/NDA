@@ -3,6 +3,8 @@
 #include <chrono>
 #include <cstring>
 #include <iostream>
+#include <vector>
+#include <algorithm>
 
 namespace NADE {
 
@@ -128,11 +130,18 @@ bool ProcessingPipeline::start()
     if (isRunning_) return false;
     if (!audioSource_ || !audioSink_) return false;
 
+    // Wire bearer callback for duplex receive path before threads start
+    if (bearer_) {
+        bearer_->setPacketReceivedCallback([this](const Packet& packet) {
+            this->handleReceivedPacket(packet);
+        });
+    }
+
     // Start all plugins
-    if (!audioSource_->start()) return false;
+    if (!audioSink_->start()) return false;
     if (bearer_ && !bearer_->start()) return false;
     if (encryptor_ && !encryptor_->start()) return false;
-    if (!audioSink_->start()) return false;
+    if (!audioSource_->start()) return false;
 
     isRunning_ = true;
     processedSamples_ = 0;  // Reset counter
@@ -228,6 +237,10 @@ void ProcessingPipeline::processingThread()
     int sampleRate = audioSource_ ? audioSource_->getSampleRate() : 48000;
 
     while (isRunning_) {
+        while (drainIncomingAudio()) {
+            // Drain queued inbound audio before handling new capture frames
+        }
+
         processAudioFrame();
         frameCount++;
 
@@ -274,19 +287,24 @@ void ProcessingPipeline::processAudioFrame()
         consecutiveFailures = 0;
     }
 
-    // 2. Encrypt if encryptor is available
+    // 2. Encrypt payload for transport if encryptor is available
+    std::vector<uint8_t> payload = serializeAudioBuffer(workBuffer_);
     if (encryptor_) {
-        // Get audio data as bytes
-        float* data = workBuffer_.getChannelData(0);
-        size_t dataSize = workBuffer_.getFrameCount() * workBuffer_.getChannelCount() * sizeof(float);
-
-        uint8_t* byteData = reinterpret_cast<uint8_t*>(data);
+        std::vector<uint8_t> plaintext = payload;
 
         // Generate nonce (would be more sophisticated in real implementation)
         uint8_t nonce[12] = {0};
 
-        size_t outputSize = dataSize + 16; // Add space for tag
-        encryptor_->encrypt(byteData, dataSize, byteData, outputSize, nonce, 12);
+        const size_t tagSize = static_cast<size_t>(std::max(0, encryptor_->getTagSize()));
+        size_t outputSize = payload.size() + tagSize;
+        payload.resize(outputSize);
+
+        if (!encryptor_->encrypt(plaintext.data(), plaintext.size(), payload.data(), outputSize, nonce, 12)) {
+            std::cerr << "[Pipeline] Failed to encrypt payload, dropping frame" << std::endl;
+            return;
+        }
+
+        payload.resize(outputSize);
     }
 
     // 3. Send over bearer if available
@@ -294,12 +312,10 @@ void ProcessingPipeline::processAudioFrame()
         Packet packet;
 
         // Serialize audio buffer to packet
-        float* data = workBuffer_.getChannelData(0);
-        size_t dataSize = workBuffer_.getFrameCount() * workBuffer_.getChannelCount() * sizeof(float);
-        packet.data.resize(dataSize);
-        std::memcpy(packet.data.data(), data, dataSize);
+        packet.data = payload;
         packet.timestamp = processedSamples_;
         packet.sequenceNumber = processedSamples_ / workBuffer_.getFrameCount();
+        packet.flags = 0;
 
         bearer_->sendPacket(packet);
     }
@@ -308,6 +324,99 @@ void ProcessingPipeline::processAudioFrame()
     audioSink_->writeAudio(workBuffer_);
 
     processedSamples_ += workBuffer_.getFrameCount();
+}
+
+bool ProcessingPipeline::drainIncomingAudio()
+{
+    AudioBuffer buffer;
+
+    {
+        std::lock_guard<std::mutex> lock(incomingMutex_);
+        if (incomingAudio_.empty()) {
+            return false;
+        }
+
+        buffer = incomingAudio_.front();
+        incomingAudio_.pop_front();
+    }
+
+    audioSink_->writeAudio(buffer);
+    processedSamples_ += buffer.getFrameCount();
+    return true;
+}
+
+void ProcessingPipeline::handleReceivedPacket(const Packet& packet)
+{
+    if (!isRunning_ || !audioSink_) return;
+
+    std::vector<uint8_t> payload(packet.data.begin(), packet.data.end());
+
+    if (encryptor_) {
+        std::vector<uint8_t> decrypted(payload.size());
+        size_t outputSize = decrypted.size();
+        uint8_t nonce[12] = {0};
+
+        if (!encryptor_->decrypt(payload.data(), payload.size(), decrypted.data(), outputSize, nonce, 12)) {
+            std::cerr << "[Pipeline] Failed to decrypt incoming packet" << std::endl;
+            return;
+        }
+
+        decrypted.resize(outputSize);
+        payload.swap(decrypted);
+    }
+
+    AudioBuffer buffer(audioSink_->getChannels(), 512);
+    if (!deserializeAudioBuffer(payload, audioSink_->getChannels(), buffer)) {
+        std::cerr << "[Pipeline] Dropping packet: unable to decode audio payload" << std::endl;
+        return;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(incomingMutex_);
+        if (incomingAudio_.size() > 32) {
+            incomingAudio_.pop_front();
+        }
+        incomingAudio_.push_back(buffer);
+    }
+}
+
+std::vector<uint8_t> ProcessingPipeline::serializeAudioBuffer(const AudioBuffer& buffer) const
+{
+    int channels = buffer.getChannelCount();
+    int frames = buffer.getFrameCount();
+
+    std::vector<float> interleaved(frames * channels, 0.0f);
+    for (int frame = 0; frame < frames; ++frame) {
+        for (int ch = 0; ch < channels; ++ch) {
+            const float* channelData = buffer.getChannelData(ch);
+            interleaved[frame * channels + ch] = channelData ? channelData[frame] : 0.0f;
+        }
+    }
+
+    const uint8_t* byteData = reinterpret_cast<const uint8_t*>(interleaved.data());
+    return std::vector<uint8_t>(byteData, byteData + interleaved.size() * sizeof(float));
+}
+
+bool ProcessingPipeline::deserializeAudioBuffer(const std::vector<uint8_t>& data, int channels, AudioBuffer& buffer) const
+{
+    if (channels <= 0) return false;
+    if (data.size() < sizeof(float) * static_cast<size_t>(channels)) return false;
+
+    size_t frameCount = data.size() / (sizeof(float) * channels);
+    const float* interleaved = reinterpret_cast<const float*>(data.data());
+
+    buffer.resize(channels, static_cast<int>(frameCount));
+
+    for (size_t frame = 0; frame < frameCount; ++frame) {
+        for (int ch = 0; ch < channels; ++ch) {
+            float* channelData = buffer.getChannelData(ch);
+            if (channelData) {
+                channelData[frame] = interleaved[frame * channels + ch];
+            }
+        }
+    }
+
+    return true;
 }
 
 } // namespace NADE
