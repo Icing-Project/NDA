@@ -40,6 +40,7 @@ private:
     void setupUI();
     void refreshPluginLists();
     void updatePipelineStatus();
+    void updateDuplexSummaries();
     QWidget* createStepCard();
     void applyModernStyles();
 
@@ -59,6 +60,8 @@ private:
     QLabel *pipelineStatusLabel;
     QLabel *latencyLabel;
     QLabel *throughputLabel;
+    QLabel *sharedTransportLabel;
+    QLabel *sharedDecryptorLabel;
 
     // Pipeline components
     std::shared_ptr<nda::PluginManager> pluginManager_;

@@ -53,7 +53,20 @@ void PipelineView::setupUI()
     mainLayout->addSpacing(10);
 
     // === PIPELINE STEPS ===
-    // Step 1: Audio Source
+    QHBoxLayout *flowLayout = new QHBoxLayout();
+    flowLayout->setSpacing(20);
+
+    // Encrypt (send) path
+    QWidget *encryptColumn = new QWidget(this);
+    QVBoxLayout *encryptLayout = new QVBoxLayout(encryptColumn);
+    QLabel *encryptTitle = new QLabel("Encrypt & Send", this);
+    encryptTitle->setObjectName("flowTitle");
+    QLabel *encryptSubtitle = new QLabel("Capture → Encrypt → Transport", this);
+    encryptSubtitle->setObjectName("flowSubtitle");
+    encryptSubtitle->setWordWrap(true);
+    encryptLayout->addWidget(encryptTitle);
+    encryptLayout->addWidget(encryptSubtitle);
+
     QWidget *sourceCard = createStepCard();
     QVBoxLayout *sourceLayout = new QVBoxLayout(sourceCard);
     QLabel *sourceLabel = new QLabel("1. Audio Source", this);
@@ -66,9 +79,8 @@ void PipelineView::setupUI()
             this, &PipelineView::onAudioSourceChanged);
     sourceLayout->addWidget(sourceLabel);
     sourceLayout->addWidget(audioSourceCombo);
-    mainLayout->addWidget(sourceCard);
+    encryptLayout->addWidget(sourceCard);
 
-    // Step 2: Encryptor (Optional)
     QWidget *encryptorCard = createStepCard();
     QVBoxLayout *encryptorLayout = new QVBoxLayout(encryptorCard);
     QLabel *encryptorLabel = new QLabel("2. Encryptor (Optional)", this);
@@ -81,9 +93,8 @@ void PipelineView::setupUI()
             this, &PipelineView::onEncryptorChanged);
     encryptorLayout->addWidget(encryptorLabel);
     encryptorLayout->addWidget(encryptorCombo);
-    mainLayout->addWidget(encryptorCard);
+    encryptLayout->addWidget(encryptorCard);
 
-    // Step 3: Bearer (Optional)
     QWidget *bearerCard = createStepCard();
     QVBoxLayout *bearerLayout = new QVBoxLayout(bearerCard);
     QLabel *bearerLabel = new QLabel("3. Network Transport (Optional)", this);
@@ -96,12 +107,46 @@ void PipelineView::setupUI()
             this, &PipelineView::onBearerChanged);
     bearerLayout->addWidget(bearerLabel);
     bearerLayout->addWidget(bearerCombo);
-    mainLayout->addWidget(bearerCard);
+    encryptLayout->addWidget(bearerCard);
 
-    // Step 4: Audio Sink
+    encryptLayout->addStretch();
+
+    // Decrypt (receive) path
+    QWidget *decryptColumn = new QWidget(this);
+    QVBoxLayout *decryptLayout = new QVBoxLayout(decryptColumn);
+    QLabel *decryptTitle = new QLabel("Decrypt & Play", this);
+    decryptTitle->setObjectName("flowTitle");
+    QLabel *decryptSubtitle = new QLabel("Buffer → Decrypt → Playback", this);
+    decryptSubtitle->setObjectName("flowSubtitle");
+    decryptSubtitle->setWordWrap(true);
+    decryptLayout->addWidget(decryptTitle);
+    decryptLayout->addWidget(decryptSubtitle);
+
+    QWidget *inboundTransportCard = createStepCard();
+    QVBoxLayout *inboundTransportLayout = new QVBoxLayout(inboundTransportCard);
+    QLabel *inboundTransportLabel = new QLabel("1. Inbound Transport", this);
+    inboundTransportLabel->setObjectName("stepLabel");
+    sharedTransportLabel = new QLabel("No transport selected", this);
+    sharedTransportLabel->setObjectName("flowBadge");
+    sharedTransportLabel->setWordWrap(true);
+    inboundTransportLayout->addWidget(inboundTransportLabel);
+    inboundTransportLayout->addWidget(sharedTransportLabel);
+    decryptLayout->addWidget(inboundTransportCard);
+
+    QWidget *decryptorCard = createStepCard();
+    QVBoxLayout *decryptorLayout = new QVBoxLayout(decryptorCard);
+    QLabel *decryptorLabel = new QLabel("2. Decryptor", this);
+    decryptorLabel->setObjectName("stepLabel");
+    sharedDecryptorLabel = new QLabel("Using plain payloads", this);
+    sharedDecryptorLabel->setObjectName("flowBadge");
+    sharedDecryptorLabel->setWordWrap(true);
+    decryptorLayout->addWidget(decryptorLabel);
+    decryptorLayout->addWidget(sharedDecryptorLabel);
+    decryptLayout->addWidget(decryptorCard);
+
     QWidget *sinkCard = createStepCard();
     QVBoxLayout *sinkLayout = new QVBoxLayout(sinkCard);
-    QLabel *sinkLabel = new QLabel("4. Audio Sink", this);
+    QLabel *sinkLabel = new QLabel("3. Audio Sink", this);
     sinkLabel->setObjectName("stepLabel");
     audioSinkCombo = new QComboBox(this);
     audioSinkCombo->addItem("(None)");
@@ -111,7 +156,13 @@ void PipelineView::setupUI()
             this, &PipelineView::onAudioSinkChanged);
     sinkLayout->addWidget(sinkLabel);
     sinkLayout->addWidget(audioSinkCombo);
-    mainLayout->addWidget(sinkCard);
+    decryptLayout->addWidget(sinkCard);
+
+    decryptLayout->addStretch();
+
+    flowLayout->addWidget(encryptColumn, 1);
+    flowLayout->addWidget(decryptColumn, 1);
+    mainLayout->addLayout(flowLayout);
 
     // === STATUS CARD ===
     QWidget *statusCard = createStepCard();
@@ -342,6 +393,27 @@ void PipelineView::applyModernStyles()
             background-color: #334155;
             color: #64748b;
         }
+
+        #flowTitle {
+            font-size: 18px;
+            font-weight: 700;
+            color: #e2e8f0;
+        }
+
+        #flowSubtitle {
+            font-size: 13px;
+            color: #94a3b8;
+            margin-bottom: 10px;
+        }
+
+        #flowBadge {
+            background-color: rgba(59, 130, 246, 0.1);
+            color: #bfdbfe;
+            padding: 8px 10px;
+            border-radius: 8px;
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            font-size: 13px;
+        }
     )");
 }
 
@@ -498,6 +570,8 @@ void PipelineView::refreshPluginLists()
     for (const auto& plugin : sinks) {
         audioSinkCombo->addItem(QString::fromStdString(plugin.info.name));
     }
+
+    updateDuplexSummaries();
 }
 
 void PipelineView::onAudioSourceChanged(int index)
@@ -516,24 +590,28 @@ void PipelineView::onBearerChanged(int index)
 {
     if (index <= 0 || !pluginManager_) {
         selectedBearer_ = nullptr;
+        updateDuplexSummaries();
         return;
     }
 
     std::string pluginName = bearerCombo->currentText().toStdString();
     selectedBearer_ = pluginManager_->getBearerPlugin(pluginName);
     updatePipelineStatus();
+    updateDuplexSummaries();
 }
 
 void PipelineView::onEncryptorChanged(int index)
 {
     if (index <= 0 || !pluginManager_) {
         selectedEncryptor_ = nullptr;
+        updateDuplexSummaries();
         return;
     }
 
     std::string pluginName = encryptorCombo->currentText().toStdString();
     selectedEncryptor_ = pluginManager_->getEncryptorPlugin(pluginName);
     updatePipelineStatus();
+    updateDuplexSummaries();
 }
 
 void PipelineView::onAudioSinkChanged(int index)
@@ -565,6 +643,19 @@ void PipelineView::updatePipelineStatus()
     // Refresh styles
     pipelineStatusLabel->style()->unpolish(pipelineStatusLabel);
     pipelineStatusLabel->style()->polish(pipelineStatusLabel);
+}
+
+void PipelineView::updateDuplexSummaries()
+{
+    QString transportSummary = selectedBearer_
+        ? QString("Receiving and sending via %1").arg(QString::fromStdString(selectedBearer_->getInfo().name))
+        : QString("Transport not configured");
+    sharedTransportLabel->setText(transportSummary);
+
+    QString decryptSummary = selectedEncryptor_
+        ? QString("Decrypting inbound packets with %1").arg(QString::fromStdString(selectedEncryptor_->getInfo().name))
+        : QString("Decrypting plain payloads (no encryptor configured)");
+    sharedDecryptorLabel->setText(decryptSummary);
 }
 
 void PipelineView::onStartPipelineClicked()
