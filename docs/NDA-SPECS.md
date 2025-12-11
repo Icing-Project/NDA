@@ -1,11 +1,11 @@
-# NDA Desktop Application for Windows
+# Nade Desktop Application for Windows
 ## Professional Audio Encryption Bridge System
 
 ---
 
 ## Executive Summary
 
-The NDA Desktop Application is a Windows and Linux audio processing system designed to provide real-time encryption for various audio communication channels. Built with C++ and Qt6 for maximum performance, it leverages platform audio APIs for optimal throughput while maintaining a flexible plugin architecture for different audio sources and encryption methods. The processing core is a full duplex pipeline where the source → encryptor → bearer → sink chain simultaneously handles outbound capture and inbound playback with symmetric plugin responsibilities.
+The Nade Desktop Application is a Windows and Linux audio processing system designed to provide real-time encryption for various audio communication channels. Built with C++ and Qt6 for maximum performance, it leverages platform audio APIs for optimal throughput while maintaining a flexible plugin architecture for different audio sources and encryption methods. The processing core is a full duplex pipeline where the source → encryptor → bearer → sink chain simultaneously handles outbound capture and inbound playback with symmetric plugin responsibilities.
 
 ### Key Features
 - **Windows Native Performance**: C++ implementation with direct Windows API access
@@ -78,25 +78,6 @@ The NDA Desktop Application is a Windows and Linux audio processing system desig
 ---
 
 ## Implementation Architecture
-
-### Full Duplex Pipeline Architecture
-
-The processing pipeline is composed of four cooperating plugin slots—**audio source**, **encryptor**, **bearer**, and **audio sink**—and every pipeline run wires them in both the send and receive directions. During capture, the source fills the working buffer, the encryptor signs+encrypts that frame (emitting nonce and tag metadata), the bearer transmits the packet, and the sink plays or monitors the same buffer locally for sidetone workflows. At the same time, the bearer exposes a packet-receive callback so inbound frames can be fed back through the decrypt → render branch: `bearer.setPacketReceivedCallback()` hands the packet to the pipeline, which invokes the encryptor’s `decrypt()` to validate nonce/tag pairs and then writes the restored samples into the sink. This means the bearer acts as a true duplex transport (send APIs plus receive callbacks) and the encryptor is logically positioned between both transport directions.
-
-#### Encryptor responsibilities
-- Plugins supply both `encrypt()` and `decrypt()` along with `setKey()` / `generateKey()` helpers so negotiated keys, nonces, and authentication tags remain synchronized across the two legs of the pipeline.
-- Nonces are generated per transmit frame (the default implementation uses a 96-bit counter-based nonce) and tags are appended to every bearer packet; decrypt uses the same tag length reported by `getTagSize()`.
-- The receive loop extracts nonce+tag from the bearer packet header, calls `decrypt()` inside the callback thread, and only forwards clean PCM frames to the sink when authentication succeeds; failures update bearer statistics and can raise UI alarms.
-
-#### Lifecycle and threading
-- During `ProcessingPipeline::start()` both source and sink threads are launched and the bearer registers its receive callback before audio capture begins to guarantee that inbound audio can be rendered immediately, even if capture is not yet delivering frames.
-- The processing thread handles outbound capture, but received packets are handled on the bearer’s networking thread; each callback writes into an AudioBuffer pool, decrypts, and schedules a sink write via a lock-free queue so the sink’s render thread never blocks on network I/O.
-- Stopping the pipeline tears down callbacks in reverse order (sink → encryptor → bearer → source) ensuring no pending decrypt jobs attempt to touch a destroyed sink.
-
-#### UI and plugin examples
-- `PipelineView` presents the source/encryptor/bearer/sink combo boxes as a duplex chain: the hint text explains that selecting a bearer enables both send and receive, and the status label switches to “Pipeline Running (Full Duplex)” after `start()` so operators know inbound audio is armed.
-- The sample `UDPBearerPlugin` implements both `sendPacket()` and `setPacketReceivedCallback()` by spinning a receive thread that hands packets to the pipeline; its configuration dialog now shows remote and local endpoints to reinforce the duplex role.
-- Dashboard latency meters aggregate outbound buffer depth plus inbound decrypt/render latency, and tooltips highlight when only one direction is active (e.g., “Receive muted—no sink selected”).
 
 ### C++/Qt6 Application Structure
 
