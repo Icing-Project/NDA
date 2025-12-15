@@ -36,6 +36,8 @@ def main():
     print(f"Copying {exe_name}...")
     if is_windows:
         exe_src = build_dir / "Release" / exe_name
+        if not exe_src.exists():
+            exe_src = build_dir / exe_name
     else:
         exe_src = build_dir / exe_name
 
@@ -60,6 +62,16 @@ def main():
     else:
         print(f"  ✗ plugins_py directory not found")
         return 1
+
+    # Copy C++ plugin DLLs (if built)
+    if is_windows:
+        cpp_plugins_dir = build_dir / "plugins"
+        if cpp_plugins_dir.exists():
+            for dll in cpp_plugins_dir.glob("*.dll"):
+                shutil.copy2(dll, plugins_dest / dll.name)
+                print(f"  V {dll.name}")
+        else:
+            print(f"  ? No C++ plugin directory found at {cpp_plugins_dir}")
 
     # Copy requirements.txt
     print("Copying requirements.txt...")
@@ -134,13 +146,19 @@ def main():
     print("  ✓ VERSION.txt")
 
     # Summary
+    py_plugin_count = len(list(plugins_dest.glob('*.py')))
+    cpp_plugin_count = len(list(plugins_dest.glob('*.dll'))) if is_windows else 0
+
     print("\n" + "=" * 60)
     print("DEPLOYMENT COMPLETE")
     print("=" * 60)
     print(f"\nPackage location: {ship_dir}")
     print("\nContents:")
     print(f"  - bin/{exe_name}")
-    print(f"  - plugins/ ({len(list(plugins_dest.glob('*.py')))} files)")
+    if is_windows:
+        print(f"  - plugins/ ({py_plugin_count} python, {cpp_plugin_count} C++ DLLs)")
+    else:
+        print(f"  - plugins/ ({py_plugin_count} python files)")
     print(f"  - docs/ (documentation)")
     print(f"  - requirements.txt")
     print(f"  - Launcher scripts")
