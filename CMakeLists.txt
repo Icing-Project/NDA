@@ -108,6 +108,53 @@ if(NDA_ENABLE_PYTHON)
     target_link_libraries(${PROJECT_NAME} Python3::Python)
 endif()
 
+# Plugin builds (shared libraries placed under build/plugins)
+set(PLUGIN_OUTPUT_DIR ${CMAKE_BINARY_DIR}/plugins)
+
+function(add_nda_plugin target)
+    add_library(${target} SHARED ${ARGN})
+    target_include_directories(${target} PRIVATE
+        ${CMAKE_SOURCE_DIR}/include
+        ${CMAKE_SOURCE_DIR}/plugins_src
+    )
+    if(WIN32)
+        target_compile_definitions(${target} PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+    endif()
+    set_target_properties(${target} PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${PLUGIN_OUTPUT_DIR}
+        LIBRARY_OUTPUT_DIRECTORY ${PLUGIN_OUTPUT_DIR}
+        ARCHIVE_OUTPUT_DIRECTORY ${PLUGIN_OUTPUT_DIR}
+    )
+endfunction()
+
+set(NDA_PLUGIN_TARGETS)
+
+if(WIN32)
+    add_nda_plugin(AIOCSourcePlugin
+        plugins_src/AIOCPluginCommon.cpp
+        plugins_src/AIOCSourcePlugin.cpp
+    )
+    target_link_libraries(AIOCSourcePlugin ole32 avrt)
+    list(APPEND NDA_PLUGIN_TARGETS AIOCSourcePlugin)
+
+    add_nda_plugin(AIOCSinkPlugin
+        plugins_src/AIOCPluginCommon.cpp
+        plugins_src/AIOCSinkPlugin.cpp
+    )
+    target_link_libraries(AIOCSinkPlugin ole32 avrt)
+    list(APPEND NDA_PLUGIN_TARGETS AIOCSinkPlugin)
+endif()
+
+add_nda_plugin(SineWaveSourcePlugin plugins_src/SineWaveSourcePlugin.cpp)
+add_nda_plugin(NullSinkPlugin plugins_src/NullSinkPlugin.cpp)
+add_nda_plugin(WavFileSinkPlugin plugins_src/WavFileSinkPlugin.cpp)
+target_compile_definitions(SineWaveSourcePlugin PRIVATE _USE_MATH_DEFINES)
+list(APPEND NDA_PLUGIN_TARGETS
+    SineWaveSourcePlugin
+    NullSinkPlugin
+    WavFileSinkPlugin
+)
+
 # Platform-specific settings
 if(WIN32)
     # Windows audio APIs
@@ -118,3 +165,9 @@ endif()
 
 # Install targets
 install(TARGETS ${PROJECT_NAME} DESTINATION bin)
+if(NDA_PLUGIN_TARGETS)
+    install(TARGETS ${NDA_PLUGIN_TARGETS}
+        RUNTIME DESTINATION plugins
+        LIBRARY DESTINATION plugins
+        ARCHIVE DESTINATION plugins)
+endif()

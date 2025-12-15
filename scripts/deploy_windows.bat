@@ -7,10 +7,14 @@ echo NDA - Windows Deployment Script
 echo ================================================
 echo.
 
-REM Check if executable exists
-if not exist "build\Release\NDA.exe" (
-    echo ERROR: build\Release\NDA.exe not found!
-    echo Please build the project first with build_windows.bat
+REM Check if executable exists (Visual Studio or Ninja layout)
+set EXE_PATH=build\Release\NDA.exe
+if not exist "%EXE_PATH%" (
+    set EXE_PATH=build\NDA.exe
+)
+if not exist "%EXE_PATH%" (
+    echo ERROR: NDA.exe not found in build\Release or build\
+    echo Please build the project first (scripts\build_windows.bat or scripts\build_windows_ninja.bat)
     pause
     exit /b 1
 )
