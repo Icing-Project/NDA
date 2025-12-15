@@ -176,6 +176,33 @@ You can tune behaviour with environment variables:
 BUILD_DIR=build-debug BUILD_TYPE=Debug RUN_AFTER_BUILD=0 ./scripts/dev_ubuntu.sh
 ```
 
+## Development Environment (Windows, MSVC/Ninja)
+
+1. Install prerequisites:
+   - Visual Studio Build Tools 2022 with the C++ workload and Windows 10 SDK (10.0.18362+)
+   - Qt 6.6.3 MSVC toolchain at `C:\Qt\6.6.3\msvc2019_64`
+   - OpenSSL Win64 at `C:\Program Files\OpenSSL-Win64`
+   - Ninja available on `PATH`
+2. Build (from the VS 2022 Developer Command Prompt):
+   - Run `scripts\build_windows_ninja.bat` **or**
+   - Manual commands:
+     ```bat
+     cmake -S . -B build -G "Ninja" ^
+       -DCMAKE_PREFIX_PATH="C:/Qt/6.6.3/msvc2019_64" ^
+       -DOPENSSL_ROOT_DIR="C:/Program Files/OpenSSL-Win64" ^
+       -DCMAKE_BUILD_TYPE=Release
+     cmake --build build --config Release
+     ```
+3. Outputs:
+   - App: `build\NDA.exe`
+   - C++ plugins: `build\plugins\AIOCSourcePlugin.dll`, `AIOCSinkPlugin.dll`, `SineWaveSourcePlugin.dll`, `NullSinkPlugin.dll`, `WavFileSinkPlugin.dll`
+4. Run:
+   - Add Qt to `PATH`: `set PATH=C:\Qt\6.6.3\msvc2019_64\bin;%PATH%`
+   - Launch `build\NDA.exe`
+   - In the UI, choose **Load Plugins from Directory** and select `build\plugins` to load the AIOC source/sink (and sample) plugins.
+5. Deploy:
+   - `scripts\deploy_windows.bat` or `python scripts\deploy.py` packages the binary and plugins; afterwards run `windeployqt` from `readytoship\bin` to copy Qt DLLs and drop in Python/OpenSSL runtimes as noted in the deploy script output.
+
 ## Project Structure
 
 ```
