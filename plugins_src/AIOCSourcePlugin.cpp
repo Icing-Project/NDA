@@ -13,6 +13,10 @@ public:
           bufferFrames_(512),
           loopbackTest_(false)
     {
+        // Lock to AIOC hardware endpoints by default (per-device IDs provided).
+        session_.setDeviceIds(
+            "{0D94B72A-8A15-4C85-B8F7-5AC442A88BFB}", // Microphone (AIOC Audio)
+            session_.deviceOutId());
         session_.setSampleRate(sampleRate_);
         session_.setChannels(channels_);
         session_.setBufferFrames(bufferFrames_);
@@ -46,7 +50,8 @@ public:
         if (state_ != PluginState::Initialized) return false;
         if (!session_.isConnected() && !session_.connect()) {
             state_ = PluginState::Error;
-            std::cerr << "[AIOCSource] Failed to connect to AIOC device" << std::endl;
+            std::cerr << "[AIOCSource] Failed to connect to AIOC device: "
+                      << session_.getTelemetry().lastMessage << std::endl;
             return false;
         }
         if (!session_.start()) {

@@ -145,6 +145,7 @@ private:
     void* renderEvent_;        // HANDLE
     void* captureEvent_;       // HANDLE
     bool comInitialized_;
+    bool comOwnsCom_;
 };
 
 } // namespace nda
