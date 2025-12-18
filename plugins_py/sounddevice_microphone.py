@@ -23,7 +23,7 @@ class SoundDeviceMicrophonePlugin(AudioSourcePlugin):
     def __init__(self):
         super().__init__()
         self.sample_rate = 48000
-        self.channels = 2
+        self.channels = 1  # mono by default to match AIOC path
         self.buffer_size = 512
         self.callback = None
         self.stream = None
@@ -72,15 +72,28 @@ class SoundDeviceMicrophonePlugin(AudioSourcePlugin):
                     pass
 
             # Open input stream with callback
-            self.stream = sd.InputStream(
-                samplerate=self.sample_rate,
-                channels=self.channels,
-                blocksize=self.buffer_size,
-                dtype=np.float32,
-                callback=self._audio_callback
-            )
-            self.stream.start()
+            def _open(channels: int):
+                return sd.InputStream(
+                    samplerate=self.sample_rate,
+                    channels=channels,
+                    blocksize=self.buffer_size,
+                    dtype=np.float32,
+                    callback=self._audio_callback
+                )
 
+            try_channels = self.channels or 1
+            try:
+                self.stream = _open(try_channels)
+                self.channels = try_channels
+            except Exception as e:
+                if try_channels != 1:
+                    print(f"[SoundDeviceMic] Falling back to mono due to: {e}", flush=True)
+                    self.stream = _open(1)
+                    self.channels = 1
+                else:
+                    raise
+
+            self.stream.start()
             self.state = PluginState.RUNNING
             print(f"[SoundDeviceMic] Started - {self.sample_rate}Hz, {self.channels} channels", flush=True)
             return True
@@ -182,7 +195,8 @@ class SoundDeviceMicrophonePlugin(AudioSourcePlugin):
     def set_channels(self, channels: int):
         """Set number of channels"""
         if self.state in (PluginState.UNLOADED, PluginState.INITIALIZED):
-            self.channels = channels
+            # Clamp to mono to avoid device errors with multi-channel input.
+            self.channels = max(1, min(1, channels))
 
 
 # Plugin factory function
