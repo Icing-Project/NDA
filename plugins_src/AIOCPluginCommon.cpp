@@ -12,17 +12,16 @@
 #include <audioclient.h>
 #include <functiondiscoverykeys_devpkey.h>
 #include <avrt.h>
+#include <setupapi.h>
+#include <hidsdi.h>
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "avrt.lib")
+#pragma comment(lib, "setupapi.lib")
+#pragma comment(lib, "hid.lib")
 #endif
 
 #ifdef _WIN32
 #include <initguid.h>
-#endif
-
-// HIDAPI is optional; include if available
-#ifdef HAVE_HIDAPI
-#include <hidapi/hidapi.h>
 #endif
 
 namespace nda {
@@ -60,7 +59,8 @@ AIOCSession::AIOCSession()
       audioCapture_(nullptr),
       renderEvent_(nullptr),
       captureEvent_(nullptr),
-      comInitialized_(false)
+      comInitialized_(false),
+      comOwnsCom_(false)
 {
 }
 
@@ -90,7 +90,14 @@ bool AIOCSession::ensureComInitialized()
 #ifdef _WIN32
     if (!comInitialized_) {
         HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-        comInitialized_ = SUCCEEDED(hr);
+        if (hr == RPC_E_CHANGED_MODE) {
+            // Already initialized in different apartment; treat as success but do not uninitialize.
+            comInitialized_ = true;
+            comOwnsCom_ = false;
+        } else {
+            comInitialized_ = SUCCEEDED(hr);
+            comOwnsCom_ = comInitialized_;
+        }
     }
     return comInitialized_;
 #else
@@ -101,10 +108,11 @@ bool AIOCSession::ensureComInitialized()
 void AIOCSession::teardownCom()
 {
 #ifdef _WIN32
-    if (comInitialized_) {
+    if (comInitialized_ && comOwnsCom_) {
         CoUninitialize();
-        comInitialized_ = false;
     }
+    comInitialized_ = false;
+    comOwnsCom_ = false;
 #endif
 }
 
@@ -113,18 +121,46 @@ bool AIOCSession::connect()
     std::lock_guard<std::mutex> lock(mutex_);
     if (connected_) return true;
 
-    // HID open (optional)
-#ifdef HAVE_HIDAPI
-    if (hid_init() == 0) {
-        hidDevice_ = hid_open(kDefaultVid, kDefaultPid, nullptr);
-        if (!hidDevice_) {
-            lastMessage_ = "HID open failed";
-        }
-    } else {
-        lastMessage_ = "HID init failed";
+    if (!ensureComInitialized()) {
+        lastMessage_ = "COM init failed";
+        return false;
     }
-#else
-    lastMessage_ = "HIDAPI not available; HID control disabled";
+
+#ifdef _WIN32
+    // HID open (VID/PID match)
+    GUID hidGuid;
+    HidD_GetHidGuid(&hidGuid);
+    HDEVINFO deviceInfo = SetupDiGetClassDevs(&hidGuid, nullptr, nullptr, DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
+    if (deviceInfo != INVALID_HANDLE_VALUE) {
+        SP_DEVICE_INTERFACE_DATA interfaceData;
+        interfaceData.cbSize = sizeof(SP_DEVICE_INTERFACE_DATA);
+        for (DWORD idx = 0; SetupDiEnumDeviceInterfaces(deviceInfo, nullptr, &hidGuid, idx, &interfaceData); ++idx) {
+            DWORD required = 0;
+            SetupDiGetDeviceInterfaceDetail(deviceInfo, &interfaceData, nullptr, 0, &required, nullptr);
+            std::vector<char> buffer(required);
+            auto detail = reinterpret_cast<PSP_DEVICE_INTERFACE_DETAIL_DATA>(buffer.data());
+            detail->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA);
+            if (!SetupDiGetDeviceInterfaceDetail(deviceInfo, &interfaceData, detail, required, nullptr, nullptr)) {
+                continue;
+            }
+
+            HANDLE h = CreateFile(detail->DevicePath, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                  OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (h == INVALID_HANDLE_VALUE) {
+                continue;
+            }
+
+            HIDD_ATTRIBUTES attrs;
+            attrs.Size = sizeof(attrs);
+            if (HidD_GetAttributes(h, &attrs) && attrs.VendorID == kDefaultVid && attrs.ProductID == kDefaultPid) {
+                hidDevice_ = h;
+                break;
+            }
+
+            CloseHandle(h);
+        }
+        SetupDiDestroyDeviceInfoList(deviceInfo);
+    }
 #endif
 
     // CDC open (optional, requires port set)
@@ -140,20 +176,11 @@ bool AIOCSession::connect()
     }
 #endif
 
-    if (!ensureComInitialized()) {
-        lastMessage_ = "COM init failed";
-        if (!loopbackEnabled_) {
-            loopbackEnabled_ = true;
-        }
-    }
-
     if (!openAudioDevices()) {
-        if (!loopbackEnabled_) {
-            loopbackEnabled_ = true;
-        }
-        connected_ = true;
-        lastMessage_ = "Audio devices unavailable; using loopback only";
-        return true;
+        lastMessage_ = "Audio device open failed";
+        closeHid();
+        closeCdc();
+        return false;
     }
 
     connected_ = true;
@@ -224,16 +251,14 @@ bool AIOCSession::setPttState(bool asserted)
     std::lock_guard<std::mutex> lock(mutex_);
     pttAsserted_ = asserted;
 
-#ifdef HAVE_HIDAPI
-    if (pttMode_ == AIOCPttMode::HidManual && hidDevice_) {
-        // HID OUT report: 4 bytes, first byte buttons. Use bit0 as generic PTT toggle.
-        unsigned char report[4] = {0};
-        report[0] = asserted ? 0x01 : 0x00;
-        hid_write(static_cast<hid_device*>(hidDevice_), report, sizeof(report));
-    }
-#endif
-
 #ifdef _WIN32
+    if (pttMode_ == AIOCPttMode::HidManual && hidDevice_) {
+        BYTE report[4] = {0};
+        report[0] = asserted ? 0x01 : 0x00;
+        DWORD written = 0;
+        WriteFile(static_cast<HANDLE>(hidDevice_), report, sizeof(report), &written, nullptr);
+    }
+
     if (pttMode_ == AIOCPttMode::CdcManual && cdcHandle_) {
         if (asserted) {
             EscapeCommFunction(static_cast<HANDLE>(cdcHandle_), SETDTR);
@@ -626,12 +651,11 @@ bool AIOCSession::initCaptureClient()
 
 void AIOCSession::closeHid()
 {
-#ifdef HAVE_HIDAPI
+#ifdef _WIN32
     if (hidDevice_) {
-        hid_close(static_cast<hid_device*>(hidDevice_));
+        CloseHandle(static_cast<HANDLE>(hidDevice_));
         hidDevice_ = nullptr;
     }
-    hid_exit();
 #endif
 }
 

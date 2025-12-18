@@ -18,6 +18,11 @@ public:
           pttMode_(AIOCPttMode::HidManual),
           loopbackTest_(false)
     {
+        // Lock to AIOC hardware endpoints by default (per-device IDs provided).
+        session_.setDeviceIds(
+            session_.deviceInId(),
+            "{DF6E2579-254F-44A3-AFD9-301BDD499759}"); // Speakers (AIOC Audio)
+        session_.setCdcPort("COM8"); // AIOC CDC port (COM8)
         session_.setSampleRate(sampleRate_);
         session_.setChannels(channels_);
         session_.setBufferFrames(bufferFrames_);
@@ -52,7 +57,8 @@ public:
         if (state_ != PluginState::Initialized) return false;
         if (!session_.isConnected() && !session_.connect()) {
             state_ = PluginState::Error;
-            std::cerr << "[AIOCSink] Failed to connect to AIOC device" << std::endl;
+            std::cerr << "[AIOCSink] Failed to connect to AIOC device: "
+                      << session_.getTelemetry().lastMessage << std::endl;
             return false;
         }
         if (!session_.start()) {
