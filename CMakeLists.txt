@@ -134,14 +134,14 @@ if(WIN32)
         plugins_src/AIOCPluginCommon.cpp
         plugins_src/AIOCSourcePlugin.cpp
     )
-    target_link_libraries(AIOCSourcePlugin ole32 avrt)
+    target_link_libraries(AIOCSourcePlugin ole32 avrt setupapi hid)
     list(APPEND NDA_PLUGIN_TARGETS AIOCSourcePlugin)
 
     add_nda_plugin(AIOCSinkPlugin
         plugins_src/AIOCPluginCommon.cpp
         plugins_src/AIOCSinkPlugin.cpp
     )
-    target_link_libraries(AIOCSinkPlugin ole32 avrt)
+    target_link_libraries(AIOCSinkPlugin ole32 avrt setupapi hid)
     list(APPEND NDA_PLUGIN_TARGETS AIOCSinkPlugin)
 endif()
 
