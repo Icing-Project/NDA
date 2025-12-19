@@ -153,8 +153,25 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
             return False
 
         try:
-            # Convert from (channels, frames) to (frames, channels)
-            outdata = buffer.data.T.copy()
+            in_channels = buffer.data.shape[0]
+
+            if in_channels == self.channels:
+                # Convert from (channels, frames) to (frames, channels)
+                outdata = buffer.data.T.copy()
+            elif in_channels == 1 and self.channels > 1:
+                # Mono source, multichannel output -> duplicate across channels
+                mono = buffer.data[0]
+                outdata = np.repeat(mono[np.newaxis, :].T, self.channels, axis=1)
+            elif in_channels > 1 and self.channels == 1:
+                # Multichannel source, mono output -> downmix
+                mixed = buffer.data.mean(axis=0, keepdims=True)
+                outdata = mixed.T
+            else:
+                # Fallback: simple average then tile to requested channels
+                mixed = buffer.data.mean(axis=0, keepdims=True)
+                outdata = np.repeat(mixed.T, self.channels, axis=1)
+
+            outdata = outdata.astype(np.float32, copy=False)
 
             # Put in queue - block if full
             self.audio_queue.put(outdata, timeout=0.1)
@@ -182,8 +199,8 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
     def set_channels(self, channels: int):
         """Set number of channels"""
         if self.state in (PluginState.UNLOADED, PluginState.INITIALIZED):
-            # Clamp to mono to avoid device incompatibility.
-            self.channels = max(1, min(1, channels))
+            # Allow requested channel count but never below mono.
+            self.channels = max(1, channels)
 
     def get_buffer_size(self) -> int:
         """Get buffer size"""

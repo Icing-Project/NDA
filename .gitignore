@@ -1,6 +1,9 @@
+
+
 # Build directories
 build/
 build-*/
+debug*/
 cmake-build-*/
 
 # CMake
@@ -38,6 +41,14 @@ ui_*.h
 *.swp
 *.swo
 *~
+
+# Python files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv
+packages/readytoship_linux
 
 # OS files
 .DS_Store
