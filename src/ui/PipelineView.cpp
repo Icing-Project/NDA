@@ -3,12 +3,43 @@
 #include <QHBoxLayout>
 #include <QGroupBox>
 #include <QFileDialog>
+#include <QCoreApplication>
 #include <QMessageBox>
 #include <QStyle>
 #include <QScrollArea>
 #include <QDir>
 #include <QDirIterator>
 #include <QFileInfo>
+#include <set>
+
+namespace {
+QStringList buildSearchPaths(const QString& startDir, const QString& targetFolder)
+{
+    QStringList candidates;
+    QDir dir(startDir);
+
+    for (int i = 0; i < 4; ++i) {
+        candidates << dir.filePath(targetFolder);
+        if (!dir.cdUp()) {
+            break;
+        }
+    }
+
+    return candidates;
+}
+
+QString findExistingDirectory(const QStringList& candidates)
+{
+    for (const auto& path : candidates) {
+        QDir dir(path);
+        if (dir.exists()) {
+            return dir.absolutePath();
+        }
+    }
+
+    return {};
+}
+}
 
 PipelineView::PipelineView(QWidget *parent)
     : QWidget(parent)
@@ -137,7 +168,7 @@ void PipelineView::setupUI()
     connect(loadPluginsButton, &QPushButton::clicked, this, &PipelineView::onLoadPluginsClicked);
     pluginButtonsLayout->addWidget(loadPluginsButton);
 
-    autoLoadPythonButton = new QPushButton("🐍  Auto-Load Python Plugins", this);
+    autoLoadPythonButton = new QPushButton("🔬  Auto-Load Plugins (Py/C++)", this);
     autoLoadPythonButton->setObjectName("secondaryButton");
     autoLoadPythonButton->setMinimumHeight(50);
     autoLoadPythonButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
@@ -386,60 +417,76 @@ void PipelineView::onAutoLoadPythonPlugins()
         return;
     }
 
-    // Define the plugins_py directory path
-    QString pluginsDir = QDir::currentPath() + "/plugins_py";
+    const QString appDir = QCoreApplication::applicationDirPath();
+    const QStringList pythonCandidates = buildSearchPaths(appDir, "plugins_py");
+    QStringList cppCandidates = buildSearchPaths(appDir, "plugins");
+    cppCandidates << buildSearchPaths(appDir, "plugins/Release");
+    cppCandidates << buildSearchPaths(appDir, "plugins/Debug");
 
-    QDir dir(pluginsDir);
-    if (!dir.exists()) {
-        // Try parent directory
-        pluginsDir = QDir::currentPath() + "/../plugins_py";
-        dir.setPath(pluginsDir);
+    const QString pythonDir = findExistingDirectory(pythonCandidates);
 
-        if (!dir.exists()) {
-            QMessageBox::warning(this, "Directory Not Found",
-                "Could not find plugins_py directory at:\n" +
-                QDir::currentPath() + "/plugins_py\nor\n" +
-                QDir::currentPath() + "/../plugins_py");
-            return;
+    QStringList existingCppDirs;
+    for (const auto& candidate : cppCandidates) {
+        QDir dir(candidate);
+        if (dir.exists()) {
+            existingCppDirs << dir.absolutePath();
         }
     }
 
-    // Use plugin manager to load plugins from the directory
-    auto pluginPaths = pluginManager_->scanPluginDirectory(pluginsDir.toStdString());
+    if (pythonDir.isEmpty() && existingCppDirs.isEmpty()) {
+        QStringList checked = pythonCandidates;
+        checked << cppCandidates;
+        QMessageBox::warning(this, "Directory Not Found",
+            "Could not find plugin directories. Checked:\n" + checked.join("\n"));
+        return;
+    }
 
-    int loadedCount = 0;
-    int skippedCount = 0;
-    QString loadedPlugins;
+    std::vector<std::string> pluginPaths;
+    if (!pythonDir.isEmpty()) {
+        auto paths = pluginManager_->scanPluginDirectory(pythonDir.toStdString());
+        pluginPaths.insert(pluginPaths.end(), paths.begin(), paths.end());
+    }
 
-    for (const auto& path : pluginPaths) {
-        // Extract filename from path
+    for (const auto& cppDir : existingCppDirs) {
+        auto paths = pluginManager_->scanPluginDirectory(cppDir.toStdString());
+        pluginPaths.insert(pluginPaths.end(), paths.begin(), paths.end());
+    }
+
+    if (pluginPaths.empty()) {
+        QStringList searched;
+        if (!pythonDir.isEmpty()) searched << pythonDir;
+        searched << existingCppDirs;
+        QMessageBox::information(this, "No Plugins Found",
+            "No plugins found in:\n" + searched.join("\n"));
+        return;
+    }
+
+    std::set<std::string> uniquePaths(pluginPaths.begin(), pluginPaths.end());
+    QStringList loadedPython;
+    QStringList loadedCpp;
+
+    for (const auto& path : uniquePaths) {
         QString fullPath = QString::fromStdString(path);
-        QString fileName = QFileInfo(fullPath).fileName();
+        QFileInfo fileInfo(fullPath);
+        const bool isPython = fileInfo.suffix().compare("py", Qt::CaseInsensitive) == 0;
 
-        // Skip base files and test files
-        if (fileName == "base_plugin.py" || fileName == "__init__.py" ||
-            fileName == "plugin_loader.py" || fileName == "test_plugins.py" ||
-            fileName.startsWith("setup_")) {
-            skippedCount++;
-            continue;
+        QString displayName = fileInfo.completeBaseName();
+        displayName.replace("_", " ");
+
+        QStringList words = displayName.split(" ");
+        for (int i = 0; i < words.size(); ++i) {
+            if (!words[i].isEmpty()) {
+                words[i][0] = words[i][0].toUpper();
+            }
         }
+        displayName = words.join(" ");
 
         if (pluginManager_->loadPlugin(path)) {
-            QString displayName = fileName;
-            displayName.replace(".py", "");
-            displayName.replace("_", " ");
-
-            // Capitalize first letter of each word
-            QStringList words = displayName.split(" ");
-            for (int i = 0; i < words.size(); ++i) {
-                if (!words[i].isEmpty()) {
-                    words[i][0] = words[i][0].toUpper();
-                }
+            if (isPython) {
+                loadedPython << displayName;
+            } else {
+                loadedCpp << displayName;
             }
-            displayName = words.join(" ");
-
-            loadedPlugins += "  • " + displayName + "\n";
-            loadedCount++;
         }
     }
 
@@ -448,16 +495,21 @@ void PipelineView::onAutoLoadPythonPlugins()
 
     // Show summary
     QString message;
+    const int loadedCount = loadedPython.size() + loadedCpp.size();
     if (loadedCount > 0) {
-        message = QString("Successfully loaded %1 Python plugin(s):\n\n%2")
-                      .arg(loadedCount)
-                      .arg(loadedPlugins);
+        message = QString("Successfully loaded %1 plugin(s).")
+                     .arg(loadedCount);
+        if (!loadedPython.isEmpty()) {
+            message += "\n\nPython:\n  - " + loadedPython.join("\n  - ");
+        }
+        if (!loadedCpp.isEmpty()) {
+            message += "\n\nC++:\n  - " + loadedCpp.join("\n  - ");
+        }
     } else {
-        message = "No new Python plugins found in:\n" + pluginsDir;
-    }
-
-    if (skippedCount > 0) {
-        message += QString("\n\nSkipped %1 system/base file(s)").arg(skippedCount);
+        QStringList searched;
+        if (!pythonDir.isEmpty()) searched << pythonDir;
+        searched << existingCppDirs;
+        message = "No new plugins loaded.\nChecked:\n" + searched.join("\n");
     }
 
     QMessageBox::information(this, "Auto-Load Complete", message);
