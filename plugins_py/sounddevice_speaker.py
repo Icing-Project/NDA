@@ -3,9 +3,10 @@ SoundDevice Speaker Plugin - Python Implementation
 Plays audio through system speakers using sounddevice
 """
 
+import queue
+
 try:
     import sounddevice as sd
-    import queue
     SOUNDDEVICE_AVAILABLE = True
 except ImportError:
     SOUNDDEVICE_AVAILABLE = False
@@ -23,16 +24,21 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
     def __init__(self):
         super().__init__()
         self.sample_rate = 48000
-        self.channels = 1  # mono by default to align with AIOC
-        self.buffer_size = 256  # low latency default, pipeline can override
+        self.channels = 1
+        self.buffer_size = 256
+        self.device = None
+        self.device_name = ""
         self.stream = None
-        self.audio_queue = queue.Queue(maxsize=8)  # Start with small queue for low latency
+        self.max_queue_buffers = 8  # modest headroom for jitter without runaway latency
+        self.audio_queue = queue.Queue(maxsize=self.max_queue_buffers)
         self.auto_scale_enabled = True
-        self.latency_mode = "auto"  # low by default, can auto-bump to high
+        self.latency_mode = "auto"
         self._underflow_count = 0
-        self._scaled_up = False
+        self._overflow_count = 0
         self._latency_upscaled = False
         self._needs_latency_bump = False
+        self._latency_bumps = 0
+        self._log_under_notice = True
 
     def initialize(self) -> bool:
         """Initialize the plugin"""
@@ -42,7 +48,8 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
             return False
 
         try:
-            sd.query_devices()
+            dev_info = sd.query_devices(self.device, "output")
+            self.device_name = dev_info.get("name", "")
             self.state = PluginState.INITIALIZED
             return True
         except Exception as e:
@@ -56,47 +63,37 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
         self.state = PluginState.UNLOADED
 
     def _audio_callback(self, outdata, frames, time, status):
-        """Callback from sounddevice - runs on audio thread"""
+        """Audio thread callback"""
         if status:
-            print(f"[SoundDeviceSpeaker] Status: {status}", flush=True)
             if getattr(status, "output_underflow", False) or "underflow" in str(status).lower():
                 self._handle_underflow()
 
         try:
-            # Get data from queue (non-blocking)
             data = self.audio_queue.get_nowait()
-            outdata[:] = data
+            if data.shape[0] == outdata.shape[0]:
+                outdata[:] = data
+            elif data.shape[0] < outdata.shape[0]:
+                padded = np.zeros_like(outdata)
+                padded[:data.shape[0], :] = data
+                outdata[:] = padded
+            else:
+                outdata[:] = data[:outdata.shape[0], :]
         except queue.Empty:
-            # No data - output silence
             outdata.fill(0)
-            # Treat empty queue as potential underrun
             self._handle_underflow()
 
     def _handle_underflow(self):
-        """Scale buffering when the output starves."""
+        """Track underruns and request latency bump if needed."""
         self._underflow_count += 1
         if not self.auto_scale_enabled:
             return
-        # Increase queue depth progressively up to 64 buffers
-        current_max = self.audio_queue.maxsize
-        if current_max < 64:
-            new_max = min(64, max(current_max * 2, current_max + 4))
-            self.audio_queue.maxsize = new_max
-            print(f"[SoundDeviceSpeaker] Output underrun detected, increasing queue depth to {new_max} buffers", flush=True)
-            self._scaled_up = True
-            # Prefill a little silence to immediately cover next callback
-            try:
-                silence = np.zeros((self.buffer_size, self.channels), dtype=np.float32)
-                self.audio_queue.put_nowait(silence)
-            except queue.Full:
-                pass
-
-        # After multiple underruns, request a latency bump if allowed
         if (self.latency_mode == "auto"
                 and not self._latency_upscaled
-                and self._underflow_count >= 2):
+                and self._underflow_count >= 3):
             self._needs_latency_bump = True
-            print("[SoundDeviceSpeaker] Requesting higher latency to avoid underruns", flush=True)
+            if self._log_under_notice:
+                print("[SoundDeviceSpeaker] Requesting higher latency to avoid underruns", flush=True)
+                self._log_under_notice = False
 
     def start(self) -> bool:
         """Start playing audio"""
@@ -104,26 +101,21 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
             return False
 
         try:
-            # Clear the queue
-            while not self.audio_queue.empty():
-                try:
-                    self.audio_queue.get_nowait()
-                except:
-                    pass
-            self._scaled_up = False
+            self.audio_queue = queue.Queue(maxsize=self.max_queue_buffers)
             self._underflow_count = 0
+            self._overflow_count = 0
             self._latency_upscaled = False
             self._needs_latency_bump = False
+            self._latency_bumps = 0
+            self._log_under_notice = True
 
-            # Prefill a small amount of silence to avoid immediate underruns
+            silence = np.zeros((self.buffer_size, self.channels), dtype=np.float32)
             try:
-                silence = np.zeros((self.buffer_size, self.channels), dtype=np.float32)
                 self.audio_queue.put_nowait(silence)
                 self.audio_queue.put_nowait(silence.copy())
             except queue.Full:
                 pass
 
-            # Open output stream with callback
             def _open(channels: int):
                 return sd.OutputStream(
                     samplerate=self.sample_rate,
@@ -131,7 +123,8 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
                     blocksize=self.buffer_size,
                     dtype=np.float32,
                     callback=self._audio_callback,
-                    latency=self._effective_latency()
+                    latency=self._effective_latency(),
+                    device=self.device
                 )
 
             try_channels = self.channels or 1
@@ -148,7 +141,7 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
 
             self.stream.start()
             self.state = PluginState.RUNNING
-            print(f"[SoundDeviceSpeaker] Started - {self.sample_rate}Hz, {self.channels} channels", flush=True)
+            print(f"[SoundDeviceSpeaker] Started - {self.sample_rate}Hz, {self.channels} channels, block {self.buffer_size}, device '{self.device_name or self.device}'", flush=True)
             return True
         except Exception as e:
             print(f"[SoundDeviceSpeaker] Failed to start: {e}", flush=True)
@@ -166,7 +159,6 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
             return "low"
         if mode == "default":
             return None
-        # auto
         return "high" if self._latency_upscaled else "low"
 
     def _maybe_bump_latency(self):
@@ -180,8 +172,7 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
                 self.stream.close()
                 self.stream = None
 
-            # Clear and rebuild queue with same maxsize
-            maxsize = self.audio_queue.maxsize or 8
+            maxsize = self.audio_queue.maxsize or self.max_queue_buffers
             self.audio_queue = queue.Queue(maxsize=maxsize)
             silence = np.zeros((self.buffer_size, self.channels), dtype=np.float32)
             try:
@@ -197,17 +188,24 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
                     blocksize=self.buffer_size,
                     dtype=np.float32,
                     callback=self._audio_callback,
-                    latency="high"
+                    latency="high",
+                    device=self.device
                 )
 
             self.stream = _open(self.channels)
             self.stream.start()
             self._latency_upscaled = True
+            self._latency_bumps += 1
             print("[SoundDeviceSpeaker] Latency bumped to high after underruns", flush=True)
         except Exception as e:
             print(f"[SoundDeviceSpeaker] Failed to bump latency: {e}", flush=True)
             import traceback
             traceback.print_exc()
+
+    def _maybe_bump_block_size(self):
+        """Increase block size progressively (256 -> 512 -> 1024) when still underrunning."""
+        # Disabled for now to avoid mid-run blocksize mismatch with pipeline.
+        return
 
     def stop(self):
         """Stop playing audio"""
@@ -249,6 +247,18 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
             mode = value.lower()
             if mode in ("low", "high", "default", "auto"):
                 self.latency_mode = mode
+        elif key == "device":
+            self.set_device(value)
+        elif key == "sampleRate":
+            try:
+                self.set_sample_rate(int(value))
+            except ValueError:
+                pass
+        elif key == "channels":
+            try:
+                self.set_channels(int(value))
+            except ValueError:
+                pass
 
     def get_parameter(self, key: str) -> str:
         """Get plugin parameter"""
@@ -262,6 +272,14 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
             return "true" if self.auto_scale_enabled else "false"
         elif key == "latencyMode":
             return self.latency_mode
+        elif key == "deviceName":
+            return self.device_name or ""
+        elif key == "underruns":
+            return str(self._underflow_count)
+        elif key == "overflows":
+            return str(self._overflow_count)
+        elif key == "latencyBumps":
+            return str(self._latency_bumps)
         return ""
 
     def write_audio(self, buffer: AudioBuffer) -> bool:
@@ -270,35 +288,34 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
             return False
 
         try:
-            # If previous underruns asked for more latency, apply it now.
             self._maybe_bump_latency()
 
             in_channels = buffer.data.shape[0]
 
             if in_channels == self.channels:
-                # Convert from (channels, frames) to (frames, channels)
                 outdata = buffer.data.T.copy()
-            elif in_channels == 1 and self.channels > 1:
-                # Mono source, multichannel output -> duplicate across channels
-                mono = buffer.data[0]
-                outdata = np.repeat(mono[np.newaxis, :].T, self.channels, axis=1)
-            elif in_channels > 1 and self.channels == 1:
-                # Multichannel source, mono output -> downmix
-                mixed = buffer.data.mean(axis=0, keepdims=True)
-                outdata = mixed.T
+            elif self.channels == 1:
+                mixed = buffer.data.mean(axis=0)
+                outdata = mixed[np.newaxis, :].T
             else:
-                # Fallback: simple average then tile to requested channels
-                mixed = buffer.data.mean(axis=0, keepdims=True)
-                outdata = np.repeat(mixed.T, self.channels, axis=1)
+                mono = buffer.data.mean(axis=0)
+                outdata = np.repeat(mono[np.newaxis, :].T, self.channels, axis=1)
 
             outdata = outdata.astype(np.float32, copy=False)
 
-            # Put in queue - block if full
-            self.audio_queue.put(outdata, timeout=0.1)
+            try:
+                self.audio_queue.put_nowait(outdata)
+            except queue.Full:
+                try:
+                    self.audio_queue.get_nowait()
+                    self.audio_queue.put_nowait(outdata)
+                except queue.Empty:
+                    pass
+                except queue.Full:
+                    pass
+                self._overflow_count += 1
+                return False
             return True
-        except queue.Full:
-            print("[SoundDeviceSpeaker] Queue full, dropping frame", flush=True)
-            return False
         except Exception as e:
             print(f"[SoundDeviceSpeaker] Write error: {e}", flush=True)
             return False
@@ -319,7 +336,6 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
     def set_channels(self, channels: int):
         """Set number of channels"""
         if self.state in (PluginState.UNLOADED, PluginState.INITIALIZED):
-            # Allow requested channel count but never below mono.
             self.channels = max(1, channels)
 
     def get_buffer_size(self) -> int:
@@ -329,14 +345,25 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
     def set_buffer_size(self, samples: int):
         """Set buffer size"""
         if self.state in (PluginState.UNLOADED, PluginState.INITIALIZED):
-            # Keep a sensible floor to avoid zero/negative sizes.
             self.buffer_size = max(64, samples)
-            # Reset queue with the new sizing goal
-            self.audio_queue = queue.Queue(maxsize=self.audio_queue.maxsize or 8)
+            self.audio_queue = queue.Queue(maxsize=self.max_queue_buffers)
+
+    def set_device(self, device):
+        if self.state in (PluginState.UNLOADED, PluginState.INITIALIZED):
+            self.device = device
+            try:
+                dev_info = sd.query_devices(self.device, "output")
+                self.device_name = dev_info.get("name", "")
+            except Exception:
+                self.device_name = ""
 
     def get_available_space(self) -> int:
         """Get available space"""
-        return self.buffer_size
+        try:
+            free_slots = self.audio_queue.maxsize - self.audio_queue.qsize()
+            return max(0, free_slots * self.buffer_size)
+        except Exception:
+            return self.buffer_size
 
 
 # Plugin factory function
