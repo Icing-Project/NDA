@@ -3,11 +3,12 @@
 #include <chrono>
 #include <cstring>
 #include <iostream>
+#include <algorithm>
 
 namespace nda {
 
 ProcessingPipeline::ProcessingPipeline()
-    : isRunning_(false), processingThread_(nullptr), processedSamples_(0)
+    : isRunning_(false), processingThread_(nullptr), frameCount_(512), processedSamples_(0)
 {
 }
 
@@ -117,9 +118,27 @@ bool ProcessingPipeline::initialize()
     // Initialize work buffer
     int sampleRate = audioSource_ ? audioSource_->getSampleRate() : 48000;
     int channels = audioSource_ ? audioSource_->getChannels() : 2;
-    workBuffer_.resize(channels, 512);
 
-    std::cout << "[Pipeline] Initialization complete - " << channels << " channels @ " << sampleRate << "Hz" << std::endl;
+    int desiredFrames = frameCount_;
+    if (audioSource_) {
+        desiredFrames = std::min(desiredFrames, audioSource_->getBufferSize());
+    }
+    if (audioSink_) {
+        desiredFrames = std::min(desiredFrames, audioSink_->getBufferSize());
+    }
+    if (desiredFrames <= 0) {
+        desiredFrames = 512;
+    }
+
+    frameCount_ = desiredFrames;
+
+    if (audioSource_) audioSource_->setBufferSize(frameCount_);
+    if (audioSink_) audioSink_->setBufferSize(frameCount_);
+
+    workBuffer_.resize(channels, frameCount_);
+
+    std::cout << "[Pipeline] Initialization complete - " << channels << " channels @ "
+              << sampleRate << "Hz (frame size " << frameCount_ << ")" << std::endl;
     return true;
 }
 
