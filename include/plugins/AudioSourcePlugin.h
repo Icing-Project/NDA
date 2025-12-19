@@ -22,6 +22,10 @@ public:
     // Get audio data (pull model)
     virtual bool readAudio(AudioBuffer& buffer) = 0;
 
+    // Buffer sizing (frames per buffer). Default to 512 if not overridden.
+    virtual int getBufferSize() const { return 512; }
+    virtual void setBufferSize(int /*samples*/) {}
+
     // Audio configuration
     virtual int getSampleRate() const = 0;
     virtual int getChannels() const = 0;

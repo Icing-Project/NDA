@@ -155,6 +155,14 @@ class AudioSourcePlugin(BasePlugin):
         """Set number of channels"""
         pass
 
+    # Optional buffer sizing (frames per buffer). Sources can override if they
+    # support configurable frame sizes.
+    def get_buffer_size(self) -> int:
+        return 512
+
+    def set_buffer_size(self, samples: int):
+        _ = samples
+
 
 class AudioSinkPlugin(BasePlugin):
     """Base class for audio sink plugins"""
