@@ -51,6 +51,7 @@ private:
     std::unique_ptr<std::thread> processingThread_;
 
     AudioBuffer workBuffer_;
+    int frameCount_;
     uint64_t processedSamples_;
 };
 
