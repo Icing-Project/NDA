@@ -85,12 +85,11 @@ class NullSinkPlugin(AudioSinkPlugin):
 
         # Calculate RMS level for monitoring (every 0.1 seconds)
         if self.show_metrics and self.frames_processed % (self.sample_rate // 10) == 0:
-            # Calculate RMS for left channel
+            # Calculate RMS per channel, handle mono safely
             left_channel = buffer.get_channel_data(0)
             rms_l = np.sqrt(np.mean(left_channel ** 2))
 
-            # Calculate RMS for right channel
-            if self.channels > 1:
+            if buffer.get_channel_count() > 1:
                 right_channel = buffer.get_channel_data(1)
                 rms_r = np.sqrt(np.mean(right_channel ** 2))
             else:

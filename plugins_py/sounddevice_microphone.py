@@ -3,9 +3,10 @@ SoundDevice Microphone Plugin - Python Implementation
 Captures audio from system microphone using sounddevice (better than PyAudio)
 """
 
+import queue
+
 try:
     import sounddevice as sd
-    import queue
     SOUNDDEVICE_AVAILABLE = True
 except ImportError:
     SOUNDDEVICE_AVAILABLE = False
@@ -23,16 +24,21 @@ class SoundDeviceMicrophonePlugin(AudioSourcePlugin):
     def __init__(self):
         super().__init__()
         self.sample_rate = 48000
-        self.channels = 1  # mono by default to match AIOC path
-        self.buffer_size = 256  # low latency default, pipeline can override
+        self.channels = 1
+        self.buffer_size = 256
+        self.device = None
+        self.device_name = ""
         self.callback = None
         self.stream = None
-        self.audio_queue = queue.Queue()
+        self.max_queue_buffers = 8  # bounds latency to ~8 blocks for jitter absorption
+        self.audio_queue = queue.Queue(maxsize=self.max_queue_buffers)
         self.auto_scale_enabled = True
-        self.latency_mode = "auto"  # start low, bump on overflow
+        self.latency_mode = "auto"
         self._needs_latency_bump = False
         self._latency_upscaled = False
         self._overflow_count = 0
+        self._latency_bumps = 0
+        self._log_overflow_notice = True
 
     def initialize(self) -> bool:
         """Initialize the plugin"""
@@ -42,8 +48,8 @@ class SoundDeviceMicrophonePlugin(AudioSourcePlugin):
             return False
 
         try:
-            # Just check that sounddevice is working
-            sd.query_devices()
+            dev_info = sd.query_devices(self.device, "input")
+            self.device_name = dev_info.get("name", "")
             self.state = PluginState.INITIALIZED
             return True
         except Exception as e:
@@ -57,13 +63,21 @@ class SoundDeviceMicrophonePlugin(AudioSourcePlugin):
         self.state = PluginState.UNLOADED
 
     def _audio_callback(self, indata, frames, time, status):
-        """Callback from sounddevice - runs on audio thread"""
+        """Audio thread callback"""
         if status:
-            print(f"[SoundDeviceMic] Status: {status}", flush=True)
             if getattr(status, "input_overflow", False) or "overflow" in str(status).lower():
                 self._handle_overflow()
-        # Put a copy in the queue
-        self.audio_queue.put(indata.copy())
+        try:
+            self.audio_queue.put_nowait(indata.copy())
+        except queue.Full:
+            try:
+                self.audio_queue.get_nowait()
+                self.audio_queue.put_nowait(indata.copy())
+            except queue.Empty:
+                pass
+            except queue.Full:
+                pass
+            self._handle_overflow()
 
     def _handle_overflow(self):
         """Request higher latency when capture overflows."""
@@ -72,9 +86,11 @@ class SoundDeviceMicrophonePlugin(AudioSourcePlugin):
             return
         if (self.latency_mode == "auto"
                 and not self._latency_upscaled
-                and self._overflow_count >= 1):
+                and self._overflow_count >= 3):
             self._needs_latency_bump = True
-            print("[SoundDeviceMic] Requesting higher latency to avoid overflows", flush=True)
+            if self._log_overflow_notice:
+                print("[SoundDeviceMic] Requesting higher latency to avoid overflows", flush=True)
+                self._log_overflow_notice = False
 
     def _effective_latency(self):
         """Resolve latency hint based on mode and scaling."""
@@ -99,12 +115,7 @@ class SoundDeviceMicrophonePlugin(AudioSourcePlugin):
                 self.stream.close()
                 self.stream = None
 
-            # Clear queue
-            while not self.audio_queue.empty():
-                try:
-                    self.audio_queue.get_nowait()
-                except queue.Empty:
-                    break
+            self.audio_queue = queue.Queue(maxsize=self.max_queue_buffers)
 
             def _open(channels: int):
                 return sd.InputStream(
@@ -113,17 +124,24 @@ class SoundDeviceMicrophonePlugin(AudioSourcePlugin):
                     blocksize=self.buffer_size,
                     dtype=np.float32,
                     callback=self._audio_callback,
-                    latency="high"
+                    latency="high",
+                    device=self.device
                 )
 
             self.stream = _open(self.channels)
             self.stream.start()
             self._latency_upscaled = True
+            self._latency_bumps += 1
             print("[SoundDeviceMic] Latency bumped to high after overflow", flush=True)
         except Exception as e:
             print(f"[SoundDeviceMic] Failed to bump latency: {e}", flush=True)
             import traceback
             traceback.print_exc()
+
+    def _maybe_bump_block_size(self):
+        """Increase block size progressively (256 -> 512 -> 1024) when still overflowing."""
+        # Disabled for now to avoid mid-run blocksize mismatch with pipeline.
+        return
 
     def start(self) -> bool:
         """Start capturing audio"""
@@ -131,17 +149,13 @@ class SoundDeviceMicrophonePlugin(AudioSourcePlugin):
             return False
 
         try:
-            # Clear the queue
-            while not self.audio_queue.empty():
-                try:
-                    self.audio_queue.get_nowait()
-                except:
-                    pass
+            self.audio_queue = queue.Queue(maxsize=self.max_queue_buffers)
             self._needs_latency_bump = False
             self._latency_upscaled = False
             self._overflow_count = 0
+            self._latency_bumps = 0
+            self._log_overflow_notice = True
 
-            # Open input stream with callback
             def _open(channels: int):
                 return sd.InputStream(
                     samplerate=self.sample_rate,
@@ -149,7 +163,8 @@ class SoundDeviceMicrophonePlugin(AudioSourcePlugin):
                     blocksize=self.buffer_size,
                     dtype=np.float32,
                     callback=self._audio_callback,
-                    latency=self._effective_latency()
+                    latency=self._effective_latency(),
+                    device=self.device
                 )
 
             try_channels = self.channels or 1
@@ -166,7 +181,7 @@ class SoundDeviceMicrophonePlugin(AudioSourcePlugin):
 
             self.stream.start()
             self.state = PluginState.RUNNING
-            print(f"[SoundDeviceMic] Started - {self.sample_rate}Hz, {self.channels} channels", flush=True)
+            print(f"[SoundDeviceMic] Started - {self.sample_rate}Hz, {self.channels} channels, block {self.buffer_size}, device '{self.device_name or self.device}'", flush=True)
             return True
         except Exception as e:
             print(f"[SoundDeviceMic] Failed to start: {e}", flush=True)
@@ -215,6 +230,18 @@ class SoundDeviceMicrophonePlugin(AudioSourcePlugin):
             mode = value.lower()
             if mode in ("low", "high", "default", "auto"):
                 self.latency_mode = mode
+        elif key == "device":
+            self.set_device(value)
+        elif key == "sampleRate":
+            try:
+                self.set_sample_rate(int(value))
+            except ValueError:
+                pass
+        elif key == "channels":
+            try:
+                self.set_channels(int(value))
+            except ValueError:
+                pass
 
     def get_parameter(self, key: str) -> str:
         """Get plugin parameter"""
@@ -228,6 +255,12 @@ class SoundDeviceMicrophonePlugin(AudioSourcePlugin):
             return "true" if self.auto_scale_enabled else "false"
         elif key == "latencyMode":
             return self.latency_mode
+        elif key == "deviceName":
+            return self.device_name or ""
+        elif key == "overflows":
+            return str(self._overflow_count)
+        elif key == "latencyBumps":
+            return str(self._latency_bumps)
         return ""
 
     def set_audio_callback(self, callback: AudioSourceCallback):
@@ -240,28 +273,23 @@ class SoundDeviceMicrophonePlugin(AudioSourcePlugin):
             buffer.clear()
             return False
 
-        # If previous overflows asked for more latency, apply it now (main thread).
         self._maybe_bump_latency()
 
         try:
-            # Block with timeout to allow checking state
-            # This is the KEY difference - proper blocking with timeout
-            indata = self.audio_queue.get(timeout=0.1)  # 100ms timeout
+            indata = self.audio_queue.get(timeout=0.2)  # allow time for real-time pacing
 
             frame_count = buffer.get_frame_count()
 
-            # indata shape is (frames, channels) - we need (channels, frames)
             if indata.shape[0] != frame_count:
-                print(f"[SoundDeviceMic] Frame count mismatch: got {indata.shape[0]}, expected {frame_count}", flush=True)
-                buffer.clear()
-                return False
+                if indata.shape[0] > frame_count:
+                    indata = indata[:frame_count, :]
+                else:
+                    pad = np.zeros((frame_count - indata.shape[0], indata.shape[1]), dtype=indata.dtype)
+                    indata = np.vstack((indata, pad))
 
-            # Transpose from (frames, channels) to (channels, frames)
             buffer.data[:] = indata.T
-
             return True
         except queue.Empty:
-            # Timeout - no data available
             buffer.clear()
             return False
         except Exception as e:
@@ -289,13 +317,22 @@ class SoundDeviceMicrophonePlugin(AudioSourcePlugin):
     def set_channels(self, channels: int):
         """Set number of channels"""
         if self.state in (PluginState.UNLOADED, PluginState.INITIALIZED):
-            # Clamp to mono to avoid device errors with multi-channel input.
-            self.channels = max(1, min(1, channels))
+            self.channels = max(1, channels)
 
     def set_buffer_size(self, samples: int):
         """Set buffer size"""
         if self.state in (PluginState.UNLOADED, PluginState.INITIALIZED):
             self.buffer_size = max(64, samples)
+            self.audio_queue = queue.Queue(maxsize=self.max_queue_buffers)
+
+    def set_device(self, device):
+        if self.state in (PluginState.UNLOADED, PluginState.INITIALIZED):
+            self.device = device
+            try:
+                dev_info = sd.query_devices(self.device, "input")
+                self.device_name = dev_info.get("name", "")
+            except Exception:
+                self.device_name = ""
 
 
 # Plugin factory function
