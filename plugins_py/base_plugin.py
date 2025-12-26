@@ -12,9 +12,7 @@ class PluginType(Enum):
     """Plugin type enumeration"""
     AUDIO_SOURCE = "AudioSource"
     AUDIO_SINK = "AudioSink"
-    BEARER = "Bearer"
-    ENCRYPTOR = "Encryptor"
-    PROCESSOR = "Processor"
+    PROCESSOR = "Processor"  # Handles encryption, effects, resampling, etc.
 
 
 class PluginState(Enum):
@@ -141,7 +139,7 @@ class AudioSourcePlugin(BasePlugin):
         pass
 
     @abstractmethod
-    def get_channels(self) -> int:
+    def get_channel_count(self) -> int:
         """Get number of channels"""
         pass
 
@@ -151,7 +149,7 @@ class AudioSourcePlugin(BasePlugin):
         pass
 
     @abstractmethod
-    def set_channels(self, channels: int):
+    def set_channel_count(self, channels: int):
         """Set number of channels"""
         pass
 
@@ -181,7 +179,7 @@ class AudioSinkPlugin(BasePlugin):
         pass
 
     @abstractmethod
-    def get_channels(self) -> int:
+    def get_channel_count(self) -> int:
         """Get number of channels"""
         pass
 
@@ -191,7 +189,7 @@ class AudioSinkPlugin(BasePlugin):
         pass
 
     @abstractmethod
-    def set_channels(self, channels: int):
+    def set_channel_count(self, channels: int):
         """Set number of channels"""
         pass
 
@@ -209,3 +207,93 @@ class AudioSinkPlugin(BasePlugin):
     def get_available_space(self) -> int:
         """Get available buffer space"""
         pass
+
+
+class AudioProcessorPlugin(BasePlugin):
+    """
+    Base class for audio processor plugins.
+    
+    Processes audio in-place (encryption, decryption, effects, resampling, etc.)
+    Python processors have equal status to C++ processors in v2.0.
+    
+    Example:
+        class GainProcessor(AudioProcessorPlugin):
+            def process_audio(self, buffer):
+                buffer.data *= 0.5  # Reduce volume by half
+                return True
+    """
+
+    def get_type(self) -> PluginType:
+        return PluginType.PROCESSOR
+
+    @abstractmethod
+    def process_audio(self, buffer: AudioBuffer) -> bool:
+        """
+        Process audio buffer in-place.
+        
+        Args:
+            buffer: AudioBuffer with .data (numpy array, shape [channels, frames])
+                    Modify buffer.data in-place to process audio.
+        
+        Returns:
+            True on success, False on error (pipeline will passthrough on failure)
+        
+        Note:
+            - Buffer is guaranteed to be at 48kHz sample rate (pipeline handles resampling)
+            - Errors should be logged but handled gracefully
+            - Return False to skip processing for this frame
+        """
+        pass
+    
+    @abstractmethod
+    def get_sample_rate(self) -> int:
+        """
+        Get current sample rate.
+        
+        Returns:
+            Sample rate in Hz (typically 48000)
+        """
+        pass
+    
+    @abstractmethod
+    def get_channel_count(self) -> int:
+        """
+        Get current channel count.
+        
+        Returns:
+            Number of channels (typically 2 for stereo)
+        """
+        pass
+    
+    @abstractmethod
+    def set_sample_rate(self, rate: int) -> None:
+        """
+        Set sample rate (called by pipeline during initialization).
+        
+        Args:
+            rate: Sample rate in Hz
+        """
+        pass
+    
+    @abstractmethod
+    def set_channel_count(self, channels: int) -> None:
+        """
+        Set channel count (called by pipeline during initialization).
+        
+        Args:
+            channels: Number of channels
+        """
+        pass
+    
+    def get_processing_latency(self) -> float:
+        """
+        Get processing latency added by this processor.
+        
+        Returns:
+            Latency in seconds (default: 0.0 for zero-latency processors)
+        
+        Note:
+            This is algorithmic latency (e.g., lookahead buffers), not computational time.
+            Used for latency reporting in dashboard.
+        """
+        return 0.0

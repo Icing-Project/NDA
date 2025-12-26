@@ -1,4 +1,5 @@
-
+.specstory/
+.pyuser/
 
 # Build directories
 build/

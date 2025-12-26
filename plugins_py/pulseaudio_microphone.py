@@ -25,7 +25,7 @@ class PulseAudioMicrophonePlugin(AudioSourcePlugin):
     def __init__(self):
         super().__init__()
         self.sample_rate = 48000
-        self.channels = 2
+        self.channel_count = 2
         self.buffer_size = 512
         self.callback = None
         self.pyaudio_instance = None
@@ -91,7 +91,7 @@ class PulseAudioMicrophonePlugin(AudioSourcePlugin):
             # Open stream with callback mode
             self.stream = self.pyaudio_instance.open(
                 format=pyaudio.paFloat32,
-                channels=self.channels,
+                channels=self.channel_count,
                 rate=self.sample_rate,
                 input=True,
                 frames_per_buffer=self.buffer_size,
@@ -99,7 +99,7 @@ class PulseAudioMicrophonePlugin(AudioSourcePlugin):
             )
 
             self.state = PluginState.RUNNING
-            print(f"[PulseAudioMic] Started - {self.sample_rate}Hz, {self.channels} channels (callback mode)", flush=True)
+            print(f"[PulseAudioMic] Started - {self.sample_rate}Hz, {self.channel_count} channels (callback mode)", flush=True)
             return True
         except Exception as e:
             print(f"[PulseAudioMic] Failed to start stream: {e}", flush=True)
@@ -157,7 +157,7 @@ class PulseAudioMicrophonePlugin(AudioSourcePlugin):
         if key == "sampleRate":
             return str(self.sample_rate)
         elif key == "channels":
-            return str(self.channels)
+            return str(self.channel_count)
         return ""
 
     def set_audio_callback(self, callback: AudioSourceCallback):
@@ -185,7 +185,7 @@ class PulseAudioMicrophonePlugin(AudioSourcePlugin):
                 samples = self.ring_buffer.popleft()
 
             frame_count = buffer.get_frame_count()
-            expected_samples = frame_count * self.channels
+            expected_samples = frame_count * self.channel_count
 
             # Verify size
             if len(samples) != expected_samples:
@@ -198,11 +198,11 @@ class PulseAudioMicrophonePlugin(AudioSourcePlugin):
                     samples = samples[:expected_samples]
 
             # De-interleave channels efficiently
-            if self.channels == 1:
+            if self.channel_count == 1:
                 buffer.data[0] = samples
             else:
                 # Reshape interleaved data to (frames, channels) then transpose to (channels, frames)
-                buffer.data[:] = samples.reshape(frame_count, self.channels).T
+                buffer.data[:] = samples.reshape(frame_count, self.channel_count).T
 
             return True
         except Exception as e:
@@ -216,19 +216,19 @@ class PulseAudioMicrophonePlugin(AudioSourcePlugin):
         """Get sample rate"""
         return self.sample_rate
 
-    def get_channels(self) -> int:
+    def get_channel_count(self) -> int:
         """Get number of channels"""
-        return self.channels
+        return self.channel_count
 
     def set_sample_rate(self, sample_rate: int):
         """Set sample rate"""
         if self.state in (PluginState.UNLOADED, PluginState.INITIALIZED):
             self.sample_rate = sample_rate
 
-    def set_channels(self, channels: int):
+    def set_channel_count(self, channels: int):
         """Set number of channels"""
         if self.state in (PluginState.UNLOADED, PluginState.INITIALIZED):
-            self.channels = channels
+            self.channel_count = channels
 
 
 # Plugin factory function

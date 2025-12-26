@@ -6,7 +6,7 @@
 #include <memory>
 #include <functional>
 
-class Encryptor;
+// v2.0: Encryptor class removed - encryption is now handled by processor plugins
 
 using AudioCallback = std::function<void(const AudioBuffer& input, AudioBuffer& output)>;
 
@@ -27,7 +27,7 @@ public:
     void setInputDevice(const std::string& deviceId);
     void setOutputDevice(const std::string& deviceId);
 
-    void setEncryptor(Encryptor* encryptor);
+    // v2.0: setEncryptor() removed - use processor plugins instead
     void setAudioCallback(AudioCallback callback);
 
     double getLatency() const;
@@ -41,7 +41,7 @@ private:
     std::unique_ptr<AudioDevice> inputDevice_;
     std::unique_ptr<AudioDevice> outputDevice_;
 
-    Encryptor* encryptor_;
+    // v2.0: encryptor_ removed - use processor plugins instead
     AudioCallback callback_;
 
     int sampleRate_;

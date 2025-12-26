@@ -16,7 +16,7 @@ class NullSinkPlugin(AudioSinkPlugin):
     def __init__(self):
         super().__init__()
         self.sample_rate = 48000
-        self.channels = 2
+        self.channel_count = 2
         self.buffer_size = 512
         self.frames_processed = 0
         self.show_metrics = True
@@ -68,7 +68,7 @@ class NullSinkPlugin(AudioSinkPlugin):
         if key == "sampleRate":
             return str(self.sample_rate)
         elif key == "channels":
-            return str(self.channels)
+            return str(self.channel_count)
         elif key == "bufferSize":
             return str(self.buffer_size)
         elif key == "showMetrics":
@@ -108,19 +108,19 @@ class NullSinkPlugin(AudioSinkPlugin):
         """Get sample rate"""
         return self.sample_rate
 
-    def get_channels(self) -> int:
+    def get_channel_count(self) -> int:
         """Get number of channels"""
-        return self.channels
+        return self.channel_count
 
     def set_sample_rate(self, sample_rate: int):
         """Set sample rate"""
         if self.state in (PluginState.UNLOADED, PluginState.INITIALIZED):
             self.sample_rate = sample_rate
 
-    def set_channels(self, channels: int):
+    def set_channel_count(self, channels: int):
         """Set number of channels"""
         if self.state in (PluginState.UNLOADED, PluginState.INITIALIZED):
-            self.channels = channels
+            self.channel_count = channels
 
     def get_buffer_size(self) -> int:
         """Get buffer size"""

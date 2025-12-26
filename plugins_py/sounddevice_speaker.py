@@ -24,7 +24,7 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
     def __init__(self):
         super().__init__()
         self.sample_rate = 48000
-        self.channels = 1
+        self.channel_count = 1
         self.buffer_size = 256
         self.device = None
         self.device_name = ""
@@ -109,7 +109,7 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
             self._latency_bumps = 0
             self._log_under_notice = True
 
-            silence = np.zeros((self.buffer_size, self.channels), dtype=np.float32)
+            silence = np.zeros((self.buffer_size, self.channel_count), dtype=np.float32)
             try:
                 self.audio_queue.put_nowait(silence)
                 self.audio_queue.put_nowait(silence.copy())
@@ -127,21 +127,21 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
                     device=self.device
                 )
 
-            try_channels = self.channels or 1
+            try_channels = self.channel_count or 1
             try:
                 self.stream = _open(try_channels)
-                self.channels = try_channels
+                self.channel_count = try_channels
             except Exception as e:
                 if try_channels != 1:
                     print(f"[SoundDeviceSpeaker] Falling back to mono due to: {e}", flush=True)
                     self.stream = _open(1)
-                    self.channels = 1
+                    self.channel_count = 1
                 else:
                     raise
 
             self.stream.start()
             self.state = PluginState.RUNNING
-            print(f"[SoundDeviceSpeaker] Started - {self.sample_rate}Hz, {self.channels} channels, block {self.buffer_size}, device '{self.device_name or self.device}'", flush=True)
+            print(f"[SoundDeviceSpeaker] Started - {self.sample_rate}Hz, {self.channel_count} channels, block {self.buffer_size}, device '{self.device_name or self.device}'", flush=True)
             return True
         except Exception as e:
             print(f"[SoundDeviceSpeaker] Failed to start: {e}", flush=True)
@@ -174,7 +174,7 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
 
             maxsize = self.audio_queue.maxsize or self.max_queue_buffers
             self.audio_queue = queue.Queue(maxsize=maxsize)
-            silence = np.zeros((self.buffer_size, self.channels), dtype=np.float32)
+            silence = np.zeros((self.buffer_size, self.channel_count), dtype=np.float32)
             try:
                 self.audio_queue.put_nowait(silence)
                 self.audio_queue.put_nowait(silence.copy())
@@ -192,7 +192,7 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
                     device=self.device
                 )
 
-            self.stream = _open(self.channels)
+            self.stream = _open(self.channel_count)
             self.stream.start()
             self._latency_upscaled = True
             self._latency_bumps += 1
@@ -256,7 +256,7 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
                 pass
         elif key == "channels":
             try:
-                self.set_channels(int(value))
+                self.set_channel_count(int(value))
             except ValueError:
                 pass
 
@@ -265,7 +265,7 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
         if key == "sampleRate":
             return str(self.sample_rate)
         elif key == "channels":
-            return str(self.channels)
+            return str(self.channel_count)
         elif key == "bufferSize":
             return str(self.buffer_size)
         elif key == "autoScale":
@@ -292,14 +292,14 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
 
             in_channels = buffer.data.shape[0]
 
-            if in_channels == self.channels:
+            if in_channels == self.channel_count:
                 outdata = buffer.data.T.copy()
-            elif self.channels == 1:
+            elif self.channel_count == 1:
                 mixed = buffer.data.mean(axis=0)
                 outdata = mixed[np.newaxis, :].T
             else:
                 mono = buffer.data.mean(axis=0)
-                outdata = np.repeat(mono[np.newaxis, :].T, self.channels, axis=1)
+                outdata = np.repeat(mono[np.newaxis, :].T, self.channel_count, axis=1)
 
             outdata = outdata.astype(np.float32, copy=False)
 
@@ -324,19 +324,19 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
         """Get sample rate"""
         return self.sample_rate
 
-    def get_channels(self) -> int:
+    def get_channel_count(self) -> int:
         """Get number of channels"""
-        return self.channels
+        return self.channel_count
 
     def set_sample_rate(self, sample_rate: int):
         """Set sample rate"""
         if self.state in (PluginState.UNLOADED, PluginState.INITIALIZED):
             self.sample_rate = sample_rate
 
-    def set_channels(self, channels: int):
+    def set_channel_count(self, channels: int):
         """Set number of channels"""
         if self.state in (PluginState.UNLOADED, PluginState.INITIALIZED):
-            self.channels = max(1, channels)
+            self.channel_count = max(1, channels)
 
     def get_buffer_size(self) -> int:
         """Get buffer size"""

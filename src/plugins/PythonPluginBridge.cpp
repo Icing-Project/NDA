@@ -1,6 +1,7 @@
 #include "plugins/PythonPluginBridge.h"
 #include <iostream>
 #include <sstream>
+#include <cstring>  // For std::memcpy
 
 #ifdef NDA_ENABLE_PYTHON
 
@@ -16,9 +17,19 @@ static int initializeNumPy() {
 }
 
 PythonPluginBridge::PythonPluginBridge()
-    : pModule_(nullptr),
-      pPluginInstance_(nullptr),
-      state_(PluginState::Unloaded)
+    : pModule_(nullptr)
+    , pPluginInstance_(nullptr)
+    , state_(PluginState::Unloaded)
+    // v2.0 Optimization: Initialize cache members
+    , cachedBasePluginModule_(nullptr)
+    , cachedAudioBufferClass_(nullptr)
+    , cachedBufferInstance_(nullptr)
+    , cachedNumpyArray_(nullptr)
+    , cachedReadAudioMethod_(nullptr)
+    , cachedWriteAudioMethod_(nullptr)
+    , cachedProcessAudioMethod_(nullptr)
+    , cachedChannels_(0)
+    , cachedFrames_(0)
 {
     if (!pythonInitialized_) {
         Py_Initialize();
@@ -34,6 +45,7 @@ PythonPluginBridge::PythonPluginBridge()
 }
 
 PythonPluginBridge::~PythonPluginBridge() {
+    destroyCache();  // v2.0: Clean up optimization cache
     shutdown();
 }
 
@@ -107,6 +119,10 @@ bool PythonPluginBridge::loadPlugin(const std::string& pluginPath, const std::st
     }
 
     state_ = PluginState::Loaded;
+    
+    // v2.0: Initialize optimization cache after plugin instance created
+    initializeCache();
+    
     std::cout << "[PythonBridge] Successfully loaded Python plugin: " << moduleName << std::endl;
     return true;
 }
@@ -167,6 +183,97 @@ void PythonPluginBridge::shutdown() {
     PyGILState_Release(gstate);
 
     state_ = PluginState::Unloaded;
+}
+
+// v2.0 Optimization: Cache management methods
+
+void PythonPluginBridge::initializeCache() {
+    // Must be called with GIL acquired or after plugin instance creation
+    PyGILState_STATE gilState = PyGILState_Ensure();
+    
+    // Step 1: Cache base_plugin module (avoid repeated imports)
+    if (!cachedBasePluginModule_) {
+        cachedBasePluginModule_ = PyImport_ImportModule("base_plugin");
+        if (cachedBasePluginModule_) {
+            Py_INCREF(cachedBasePluginModule_);  // Keep alive
+            std::cout << "[PythonBridge] Cached base_plugin module" << std::endl;
+        } else {
+            std::cerr << "[PythonBridge] Failed to cache base_plugin module" << std::endl;
+            PyErr_Print();
+        }
+    }
+    
+    // Step 2: Cache AudioBuffer class (avoid repeated attribute lookup)
+    if (!cachedAudioBufferClass_ && cachedBasePluginModule_) {
+        cachedAudioBufferClass_ = PyObject_GetAttrString(
+            cachedBasePluginModule_, "AudioBuffer"
+        );
+        if (cachedAudioBufferClass_) {
+            Py_INCREF(cachedAudioBufferClass_);  // Keep alive
+            std::cout << "[PythonBridge] Cached AudioBuffer class" << std::endl;
+        } else {
+            std::cerr << "[PythonBridge] Failed to cache AudioBuffer class" << std::endl;
+            PyErr_Print();
+        }
+    }
+    
+    // Step 3: Cache method objects (avoid repeated attribute lookups)
+    // Only cache methods that exist for this plugin type
+    if (pPluginInstance_) {
+        cachedReadAudioMethod_ = PyObject_GetAttrString(pPluginInstance_, "read_audio");
+        if (PyErr_Occurred()) {
+            PyErr_Clear();  // Clear error if method doesn't exist
+            cachedReadAudioMethod_ = nullptr;
+        }
+        
+        cachedWriteAudioMethod_ = PyObject_GetAttrString(pPluginInstance_, "write_audio");
+        if (PyErr_Occurred()) {
+            PyErr_Clear();  // Clear error if method doesn't exist
+            cachedWriteAudioMethod_ = nullptr;
+        }
+        
+        cachedProcessAudioMethod_ = PyObject_GetAttrString(pPluginInstance_, "process_audio");
+        if (PyErr_Occurred()) {
+            PyErr_Clear();  // Clear error if method doesn't exist (sinks don't have this)
+            cachedProcessAudioMethod_ = nullptr;
+        }
+        
+        // Note: Don't INCREF these - we own them from GetAttrString
+        // They'll be cleaned up in destroyCache()
+        
+        std::cout << "[PythonBridge] Cached method objects" << std::endl;
+    }
+    
+    PyGILState_Release(gilState);
+}
+
+void PythonPluginBridge::destroyCache() {
+    PyGILState_STATE gilState = PyGILState_Ensure();
+    
+    // Clean up method caches
+    Py_XDECREF(cachedProcessAudioMethod_);
+    Py_XDECREF(cachedWriteAudioMethod_);
+    Py_XDECREF(cachedReadAudioMethod_);
+    
+    // Clean up buffer cache
+    Py_XDECREF(cachedBufferInstance_);
+    Py_XDECREF(cachedAudioBufferClass_);
+    Py_XDECREF(cachedBasePluginModule_);
+    
+    // Null out pointers
+    cachedProcessAudioMethod_ = nullptr;
+    cachedWriteAudioMethod_ = nullptr;
+    cachedReadAudioMethod_ = nullptr;
+    cachedBufferInstance_ = nullptr;
+    cachedAudioBufferClass_ = nullptr;
+    cachedBasePluginModule_ = nullptr;
+    cachedNumpyArray_ = nullptr;
+    
+    // Reset dimension tracking
+    cachedChannels_ = 0;
+    cachedFrames_ = 0;
+    
+    PyGILState_Release(gilState);
 }
 
 bool PythonPluginBridge::start() {
@@ -273,9 +380,8 @@ PluginInfo PythonPluginBridge::getInfo() const {
             std::string typeStr = PyUnicode_AsUTF8(pTypeValue);
             if (typeStr == "AudioSource") info.type = PluginType::AudioSource;
             else if (typeStr == "AudioSink") info.type = PluginType::AudioSink;
-            else if (typeStr == "Bearer") info.type = PluginType::Bearer;
-            else if (typeStr == "Encryptor") info.type = PluginType::Encryptor;
             else if (typeStr == "Processor") info.type = PluginType::Processor;
+            // v2.0: Bearer and Encryptor removed
             Py_DECREF(pTypeValue);
         }
         Py_DECREF(pType);
@@ -331,20 +437,39 @@ bool PythonPluginBridge::readAudio(AudioBuffer& buffer) {
         return false;
     }
 
-    // Acquire GIL for thread-safe Python API calls
+    // OPTIMIZATION: Batch GIL operations (acquire ONCE per frame)
     PyGILState_STATE gstate = PyGILState_Ensure();
 
-    // Create Python AudioBuffer object
-    PyObject* pBuffer = createPythonAudioBuffer(buffer);
+    // OPTIMIZATION: Use cached buffer (avoid repeated allocation)
+    PyObject* pBuffer = getOrCreateCachedBuffer(buffer);
     if (!pBuffer) {
-        PyGILState_Release(gstate);
-        return false;
+        // Fallback to legacy method
+        pBuffer = createPythonAudioBuffer(buffer);
+        if (!pBuffer) {
+            PyGILState_Release(gstate);
+            return false;
+        }
+    } else {
+        // OPTIMIZATION: Fast memcpy data update (not needed for read, but prepare buffer)
+        // For readAudio, Python fills the buffer, so we don't need to copy TO Python
     }
 
-    PyObject* result = PyObject_CallMethod(pPluginInstance_, "read_audio", "O", pBuffer);
+    // OPTIMIZATION: Use cached method object (avoid attribute lookup)
+    PyObject* result = nullptr;
+    if (cachedReadAudioMethod_) {
+        result = PyObject_CallFunctionObjArgs(
+            cachedReadAudioMethod_, pBuffer, nullptr
+        );
+    } else {
+        // Fallback
+        result = PyObject_CallMethod(pPluginInstance_, "read_audio", "O", pBuffer);
+    }
+    
     if (!result) {
         PyErr_Print();
-        Py_DECREF(pBuffer);
+        if (!cachedBufferInstance_ || pBuffer != cachedBufferInstance_) {
+            Py_DECREF(pBuffer);
+        }
         PyGILState_Release(gstate);
         return false;
     }
@@ -357,11 +482,12 @@ bool PythonPluginBridge::readAudio(AudioBuffer& buffer) {
         copyFromPythonBuffer(pBuffer, buffer);
     }
 
-    Py_DECREF(pBuffer);
+    // Don't DECREF if using cached buffer
+    if (!cachedBufferInstance_ || pBuffer != cachedBufferInstance_) {
+        Py_DECREF(pBuffer);
+    }
 
-    // Release GIL
     PyGILState_Release(gstate);
-
     return success;
 }
 
@@ -370,31 +496,53 @@ bool PythonPluginBridge::writeAudio(const AudioBuffer& buffer) {
         return false;
     }
 
-    // Acquire GIL for thread-safe Python API calls
+    // OPTIMIZATION: Batch GIL operations (acquire ONCE per frame)
     PyGILState_STATE gstate = PyGILState_Ensure();
 
-    // Create Python AudioBuffer object
-    PyObject* pBuffer = createPythonAudioBuffer(buffer);
+    // OPTIMIZATION: Use cached buffer (avoid repeated allocation)
+    // Note: Need to cast away const for getOrCreateCachedBuffer
+    PyObject* pBuffer = getOrCreateCachedBuffer(const_cast<AudioBuffer&>(buffer));
     if (!pBuffer) {
-        PyGILState_Release(gstate);
-        return false;
+        // Fallback to legacy method
+        pBuffer = createPythonAudioBuffer(buffer);
+        if (!pBuffer) {
+            PyGILState_Release(gstate);
+            return false;
+        }
+    } else {
+        // OPTIMIZATION: Fast memcpy data update (copy TO Python for write)
+        updateCachedBufferData(buffer, pBuffer);
     }
 
-    PyObject* result = PyObject_CallMethod(pPluginInstance_, "write_audio", "O", pBuffer);
+    // OPTIMIZATION: Use cached method object (avoid attribute lookup)
+    PyObject* result = nullptr;
+    if (cachedWriteAudioMethod_) {
+        result = PyObject_CallFunctionObjArgs(
+            cachedWriteAudioMethod_, pBuffer, nullptr
+        );
+    } else {
+        // Fallback
+        result = PyObject_CallMethod(pPluginInstance_, "write_audio", "O", pBuffer);
+    }
+    
     if (!result) {
         PyErr_Print();
-        Py_DECREF(pBuffer);
+        if (!cachedBufferInstance_ || pBuffer != cachedBufferInstance_) {
+            Py_DECREF(pBuffer);
+        }
         PyGILState_Release(gstate);
         return false;
     }
 
     bool success = PyObject_IsTrue(result);
     Py_DECREF(result);
-    Py_DECREF(pBuffer);
+    
+    // Don't DECREF if using cached buffer
+    if (!cachedBufferInstance_ || pBuffer != cachedBufferInstance_) {
+        Py_DECREF(pBuffer);
+    }
 
-    // Release GIL
     PyGILState_Release(gstate);
-
     return success;
 }
 
@@ -513,7 +661,181 @@ int PythonPluginBridge::getAvailableSpace() const {
     return space;
 }
 
+// AudioProcessorPlugin interface implementation (v2.0)
+bool PythonPluginBridge::processAudio(AudioBuffer& buffer) {
+    if (state_ != PluginState::Running || !pPluginInstance_) {
+        return false;
+    }
+
+    // OPTIMIZATION: Batch GIL operations (acquire ONCE per frame)
+    PyGILState_STATE gstate = PyGILState_Ensure();
+
+    try {
+        // OPTIMIZATION: Use cached buffer (avoid repeated allocation)
+        PyObject* pBuffer = getOrCreateCachedBuffer(buffer);
+        if (!pBuffer) {
+            // Fallback to legacy method if cache fails
+            pBuffer = createPythonAudioBuffer(buffer);
+            if (!pBuffer) {
+                PyGILState_Release(gstate);
+                return false;
+            }
+        } else {
+            // OPTIMIZATION: Fast memcpy data update (not element-by-element)
+            updateCachedBufferData(buffer, pBuffer);
+        }
+
+        // OPTIMIZATION: Use cached method object (avoid attribute lookup)
+        PyObject* result = nullptr;
+        if (cachedProcessAudioMethod_) {
+            result = PyObject_CallFunctionObjArgs(
+                cachedProcessAudioMethod_, pBuffer, nullptr
+            );
+        } else {
+            // Fallback to method call
+            result = PyObject_CallMethod(pPluginInstance_, "process_audio", "O", pBuffer);
+        }
+        
+        if (!result) {
+            std::cerr << "[PythonBridge] Error calling process_audio()" << std::endl;
+            PyErr_Print();
+            // Don't DECREF pBuffer if it's cached
+            if (!cachedBufferInstance_ || pBuffer != cachedBufferInstance_) {
+                Py_DECREF(pBuffer);
+            }
+            PyGILState_Release(gstate);
+            return false;  // Processor failed - pipeline will passthrough
+        }
+
+        bool success = PyObject_IsTrue(result);
+        Py_DECREF(result);
+
+        if (success) {
+            // Copy processed data back from Python to C++ (in-place modification)
+            copyFromPythonBuffer(pBuffer, buffer);
+        }
+
+        // Don't DECREF if using cached buffer
+        if (!cachedBufferInstance_ || pBuffer != cachedBufferInstance_) {
+            Py_DECREF(pBuffer);
+        }
+        
+        PyGILState_Release(gstate);
+        return success;
+        
+    } catch (const std::exception& e) {
+        std::cerr << "[PythonBridge] Exception in processAudio: " << e.what() << std::endl;
+        PyGILState_Release(gstate);
+        return false;
+    } catch (...) {
+        std::cerr << "[PythonBridge] Unknown exception in processAudio" << std::endl;
+        PyGILState_Release(gstate);
+        return false;
+    }
+}
+
+double PythonPluginBridge::getProcessingLatency() const {
+    if (!pPluginInstance_) return 0.0;
+
+    PyGILState_STATE gstate = PyGILState_Ensure();
+
+    PyObject* result = PyObject_CallMethod(pPluginInstance_, "get_processing_latency", nullptr);
+    if (!result) {
+        // Method might not exist (default 0.0)
+        PyErr_Clear();
+        PyGILState_Release(gstate);
+        return 0.0;
+    }
+
+    double latency = PyFloat_AsDouble(result);
+    Py_DECREF(result);
+    PyGILState_Release(gstate);
+    
+    return latency;
+}
+
+// v2.0 Optimization: Get or create cached buffer (avoid repeated allocation)
+PyObject* PythonPluginBridge::getOrCreateCachedBuffer(const AudioBuffer& buffer) {
+    // Check if buffer dimensions changed (need to recreate)
+    if (cachedBufferInstance_ &&
+        (cachedChannels_ != buffer.getChannelCount() ||
+         cachedFrames_ != buffer.getFrameCount())) {
+        // Dimensions changed - release old buffer
+        Py_DECREF(cachedBufferInstance_);
+        cachedBufferInstance_ = nullptr;
+        std::cout << "[PythonBridge] Cache invalidated (size changed: " 
+                  << cachedChannels_ << "x" << cachedFrames_ << " → "
+                  << buffer.getChannelCount() << "x" << buffer.getFrameCount() << ")" << std::endl;
+    }
+    
+    // Create new buffer if needed
+    if (!cachedBufferInstance_ && cachedAudioBufferClass_) {
+        cachedBufferInstance_ = PyObject_CallFunction(
+            cachedAudioBufferClass_, "ii",
+            buffer.getChannelCount(),
+            buffer.getFrameCount()
+        );
+        
+        if (cachedBufferInstance_) {
+            Py_INCREF(cachedBufferInstance_);  // Keep alive
+            cachedChannels_ = buffer.getChannelCount();
+            cachedFrames_ = buffer.getFrameCount();
+            std::cout << "[PythonBridge] Created cached buffer: " 
+                      << cachedChannels_ << "x" << cachedFrames_ << std::endl;
+        } else {
+            std::cerr << "[PythonBridge] Failed to create cached buffer" << std::endl;
+            PyErr_Print();
+        }
+    }
+    
+    return cachedBufferInstance_;
+}
+
+// v2.0 Optimization: Update cached buffer data using fast memcpy
+void PythonPluginBridge::updateCachedBufferData(const AudioBuffer& buffer, PyObject* pyBuffer) {
+    if (!pyBuffer) return;
+    
+    // Get pointer to NumPy array inside Python buffer
+    PyObject* dataAttr = PyObject_GetAttrString(pyBuffer, "data");
+    if (!dataAttr || !PyArray_Check(dataAttr)) {
+        std::cerr << "[PythonBridge] Failed to get buffer data attribute" << std::endl;
+        Py_XDECREF(dataAttr);
+        return;
+    }
+    
+    PyArrayObject* array = reinterpret_cast<PyArrayObject*>(dataAttr);
+    float* pyData = static_cast<float*>(PyArray_DATA(array));
+    
+    if (!pyData) {
+        std::cerr << "[PythonBridge] NumPy array data pointer is null" << std::endl;
+        Py_DECREF(dataAttr);
+        return;
+    }
+    
+    const int frames = buffer.getFrameCount();
+    const int channels = buffer.getChannelCount();
+    
+    // OPTIMIZATION: Fast memcpy per channel (NOT element-by-element loop)
+    for (int ch = 0; ch < channels; ++ch) {
+        const float* cppData = buffer.getChannelData(ch);
+        if (!cppData) {
+            std::cerr << "[PythonBridge] C++ channel data is null" << std::endl;
+            continue;
+        }
+        
+        std::memcpy(
+            pyData + (ch * frames),
+            cppData,
+            frames * sizeof(float)
+        );
+    }
+    
+    Py_DECREF(dataAttr);
+}
+
 PyObject* PythonPluginBridge::createPythonAudioBuffer(const AudioBuffer& buffer) const {
+    // LEGACY METHOD - kept for fallback, but optimized path uses getOrCreateCachedBuffer()
+    
     // Import base_plugin module
     PyObject* basePlugin = PyImport_ImportModule("base_plugin");
     if (!basePlugin) {
