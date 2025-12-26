@@ -1,21 +1,25 @@
 #include "ui/MainWindow.h"
-#include "ui/Dashboard.h"
-#include "ui/PipelineView.h"
-#include "ui/SettingsView.h"
+#include "ui/UnifiedPipelineView.h"
 #include <QMenuBar>
 #include <QMenu>
 #include <QAction>
 #include <QStatusBar>
+#include <QCoreApplication>
+#include <QDir>
+#include <QDebug>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
-    setWindowTitle("NDA - Plugin-Based Audio Encryption System");
+    setWindowTitle("NDA v2.0 - Real-Time Audio Encryption Bridge");
     setMinimumSize(1200, 800);
 
     // Create core components
     pluginManager_ = std::make_shared<nda::PluginManager>();
-    pipeline_ = std::make_shared<nda::ProcessingPipeline>();
+    
+    // v2.0: Dual pipeline architecture (TX + RX)
+    txPipeline_ = std::make_shared<nda::ProcessingPipeline>();
+    rxPipeline_ = std::make_shared<nda::ProcessingPipeline>();
 
     setupUI();
     createMenus();
@@ -28,29 +32,23 @@ MainWindow::~MainWindow()
 
 void MainWindow::setupUI()
 {
-    tabWidget = new QTabWidget(this);
-    setCentralWidget(tabWidget);
-
-    // Create views
-    pipelineView = new PipelineView(this);
-    pipelineView->setPluginManager(pluginManager_);
-    pipelineView->setPipeline(pipeline_);
-
-    dashboard = new Dashboard(this);
-    dashboard->setPipeline(pipeline_);
-
-    settingsView = new SettingsView(this);
-
-    // Add tabs
-    tabWidget->addTab(pipelineView, "Pipeline Configuration");
-    tabWidget->addTab(dashboard, "Dashboard");
-    tabWidget->addTab(settingsView, "Settings");
-
+    // v2.0: No tabs - single unified view
+    unifiedView_ = new nda::UnifiedPipelineView(this);
+    unifiedView_->setPluginManager(pluginManager_);
+    unifiedView_->setTXPipeline(txPipeline_);
+    unifiedView_->setRXPipeline(rxPipeline_);
+    
+    setCentralWidget(unifiedView_);
+    
     // Connect signals
-    connect(pipelineView, &PipelineView::pipelineStarted, this, &MainWindow::onPipelineStarted);
-    connect(pipelineView, &PipelineView::pipelineStopped, this, &MainWindow::onPipelineStopped);
-    connect(dashboard, &Dashboard::streamStarted, this, &MainWindow::onPipelineStarted);
-    connect(dashboard, &Dashboard::streamStopped, this, &MainWindow::onPipelineStopped);
+    connect(unifiedView_, &nda::UnifiedPipelineView::txPipelineStarted,
+            this, &MainWindow::onTXPipelineStarted);
+    connect(unifiedView_, &nda::UnifiedPipelineView::txPipelineStopped,
+            this, &MainWindow::onTXPipelineStopped);
+    connect(unifiedView_, &nda::UnifiedPipelineView::rxPipelineStarted,
+            this, &MainWindow::onRXPipelineStarted);
+    connect(unifiedView_, &nda::UnifiedPipelineView::rxPipelineStopped,
+            this, &MainWindow::onRXPipelineStopped);
 }
 
 void MainWindow::createMenus()
@@ -72,23 +70,84 @@ void MainWindow::createStatusBar()
     statusBar()->showMessage("Ready");
 }
 
-void MainWindow::onPipelineStarted()
+void MainWindow::onTXPipelineStarted()
 {
-    statusBar()->showMessage("Pipeline Running - Processing Audio");
-    // Update Dashboard UI state
-    dashboard->updatePipelineState();
-    // Auto-switch to Dashboard tab to show live metrics
-    tabWidget->setCurrentWidget(dashboard);
+    statusBar()->showMessage("TX Pipeline Running");
 }
 
-void MainWindow::onPipelineStopped()
+void MainWindow::onTXPipelineStopped()
 {
-    statusBar()->showMessage("Pipeline Stopped");
-    // Update Dashboard UI state
-    dashboard->updatePipelineState();
+    statusBar()->showMessage("TX Pipeline Stopped");
+}
+
+void MainWindow::onRXPipelineStarted()
+{
+    statusBar()->showMessage("RX Pipeline Running");
+}
+
+void MainWindow::onRXPipelineStopped()
+{
+    statusBar()->showMessage("RX Pipeline Stopped");
 }
 
 void MainWindow::onStatusUpdate(const QString &message)
 {
     statusBar()->showMessage(message);
+}
+
+void MainWindow::autoLoadPlugins()
+{
+    if (!pluginManager_) return;
+    
+    // Auto-discover plugins from standard directories
+    const QString appDir = QCoreApplication::applicationDirPath();
+    
+    // Python plugins
+    QStringList pythonCandidates = {
+        appDir + "/plugins_py",
+        appDir + "/../plugins_py",
+        appDir + "/../../plugins_py"
+    };
+    
+    // C++ plugins
+    QStringList cppCandidates = {
+        appDir + "/plugins",
+        appDir + "/plugins/Release",
+        appDir + "/plugins/Debug",
+        appDir + "/../build/plugins",
+        appDir + "/../../build/plugins"
+    };
+    
+    int loadedCount = 0;
+    
+    // Load Python plugins
+    for (const auto& dir : pythonCandidates) {
+        if (QDir(dir).exists()) {
+            auto paths = pluginManager_->scanPluginDirectory(dir.toStdString());
+            for (const auto& path : paths) {
+                if (pluginManager_->loadPlugin(path)) {
+                    loadedCount++;
+                }
+            }
+        }
+    }
+    
+    // Load C++ plugins
+    for (const auto& dir : cppCandidates) {
+        if (QDir(dir).exists()) {
+            auto paths = pluginManager_->scanPluginDirectory(dir.toStdString());
+            for (const auto& path : paths) {
+                if (pluginManager_->loadPlugin(path)) {
+                    loadedCount++;
+                }
+            }
+        }
+    }
+    
+    qDebug() << "Auto-loaded" << loadedCount << "plugins on startup";
+    
+    // Notify unified view to refresh plugin lists
+    if (unifiedView_) {
+        unifiedView_->refreshPluginLists();
+    }
 }

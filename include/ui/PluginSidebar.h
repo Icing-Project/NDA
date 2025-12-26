@@ -1,0 +1,73 @@
+#ifndef PLUGINSIDEBAR_H
+#define PLUGINSIDEBAR_H
+
+#include <QWidget>
+#include <QVBoxLayout>
+#include <QLabel>
+#include <QComboBox>
+#include <QSlider>
+#include <QLineEdit>
+#include <QPushButton>
+#include <QCheckBox>
+#include <QFileDialog>
+#include "plugins/BasePlugin.h"
+#include <memory>
+#include <map>
+
+namespace nda {
+
+/**
+ * Plugin-specific parameter configuration sidebar
+ * 
+ * Dynamically generates UI based on plugin's available parameters.
+ * Supports:
+ * - Audio device selection (QComboBox)
+ * - File path selection (QLineEdit + Browse button)
+ * - Numeric parameters (QSlider + SpinBox)
+ * - Boolean flags (QCheckBox)
+ * - String parameters (QLineEdit)
+ */
+class PluginSidebar : public QWidget
+{
+    Q_OBJECT
+
+public:
+    explicit PluginSidebar(QWidget *parent = nullptr);
+    ~PluginSidebar();
+
+    void showPluginConfig(std::shared_ptr<BasePlugin> plugin);
+
+signals:
+    void parameterChanged(const std::string& key, const std::string& value);
+
+private slots:
+    void onApplyClicked();
+    void onResetClicked();
+
+private:
+    void setupUI();
+    void clearParameters();
+    void addDeviceSelector(const QString& label, const QString& key);
+    void addFileSelector(const QString& label, const QString& key);
+    void addSlider(const QString& label, const QString& key, int min, int max, int defaultVal);
+    void addCheckbox(const QString& label, const QString& key);
+    void addTextInput(const QString& label, const QString& key);
+    
+    void applyModernStyles();
+    
+    std::shared_ptr<BasePlugin> currentPlugin_;
+    
+    QVBoxLayout *mainLayout_;
+    QWidget *contentWidget_;
+    QLabel *pluginNameLabel_;
+    QPushButton *applyButton_;
+    QPushButton *resetButton_;
+    
+    // Parameter widgets (key -> widget)
+    std::map<std::string, QWidget*> parameterWidgets_;
+};
+
+} // namespace nda
+
+#endif // PLUGINSIDEBAR_H
+

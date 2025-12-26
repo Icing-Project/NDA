@@ -16,7 +16,7 @@ class SineWaveSourcePlugin(AudioSourcePlugin):
     def __init__(self):
         super().__init__()
         self.sample_rate = 48000
-        self.channels = 2
+        self.channel_count = 2
         self.frequency = 440.0  # A4 note
         self.phase = 0.0
         self.callback = None
@@ -66,7 +66,7 @@ class SineWaveSourcePlugin(AudioSourcePlugin):
         elif key == "sampleRate":
             return str(self.sample_rate)
         elif key == "channels":
-            return str(self.channels)
+            return str(self.channel_count)
         return ""
 
     def set_audio_callback(self, callback: AudioSourceCallback):
@@ -89,7 +89,7 @@ class SineWaveSourcePlugin(AudioSourcePlugin):
         samples = 0.5 * np.sin(phases).astype(np.float32)
 
         # Write to all channels
-        for ch in range(self.channels):
+        for ch in range(self.channel_count):
             buffer.data[ch] = samples
 
         # Update phase for next call
@@ -103,19 +103,19 @@ class SineWaveSourcePlugin(AudioSourcePlugin):
         """Get sample rate"""
         return self.sample_rate
 
-    def get_channels(self) -> int:
+    def get_channel_count(self) -> int:
         """Get number of channels"""
-        return self.channels
+        return self.channel_count
 
     def set_sample_rate(self, sample_rate: int):
         """Set sample rate"""
         if self.state in (PluginState.UNLOADED, PluginState.INITIALIZED):
             self.sample_rate = sample_rate
 
-    def set_channels(self, channels: int):
+    def set_channel_count(self, channels: int):
         """Set number of channels"""
         if self.state in (PluginState.UNLOADED, PluginState.INITIALIZED):
-            self.channels = channels
+            self.channel_count = channels
 
 
 # Plugin factory function

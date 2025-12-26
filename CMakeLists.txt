@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(NDA VERSION 1.0.5 LANGUAGES CXX)
+project(NDA VERSION 1.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -13,8 +13,23 @@ option(NDA_ENABLE_PYTHON "Enable Python plugin support" ON)
 # Qt6 packages
 find_package(Qt6 REQUIRED COMPONENTS Core Widgets Gui Network)
 
-# OpenSSL for encryption
+# OpenSSL for encryption (now plugin-only, not core dependency in v2.0)
 find_package(OpenSSL REQUIRED)
+
+# Optional: libsamplerate for high-quality resampling
+find_package(PkgConfig)
+if(PKG_CONFIG_FOUND)
+    pkg_check_modules(SAMPLERATE samplerate)
+    if(SAMPLERATE_FOUND)
+        message(STATUS "libsamplerate found - High quality resampling available")
+        add_compile_definitions(HAVE_LIBSAMPLERATE)
+        include_directories(${SAMPLERATE_INCLUDE_DIRS})
+    else()
+        message(STATUS "libsamplerate not found - Using Simple/Medium quality only")
+    endif()
+else()
+    message(STATUS "pkg-config not found - libsamplerate detection skipped")
+endif()
 
 # Find Python and NumPy if Python support is enabled
 if(NDA_ENABLE_PYTHON)
@@ -34,20 +49,20 @@ endif()
 # Include directories
 include_directories(${CMAKE_SOURCE_DIR}/include)
 
-# Source files
+# Source files (v2.0: Unified view)
 set(SOURCES
     src/main.cpp
     src/ui/MainWindow.cpp
-    src/ui/Dashboard.cpp
+    src/ui/UnifiedPipelineView.cpp
+    src/ui/PluginSidebar.cpp
     src/ui/AudioDevicesView.cpp
     src/ui/EncryptionView.cpp
     src/ui/PluginsView.cpp
     src/ui/SettingsView.cpp
-    src/ui/PipelineView.cpp
+    # DELETED: Dashboard.cpp, PipelineView.cpp (merged into UnifiedPipelineView)
     src/audio/AudioEngine.cpp
     src/audio/AudioDevice.cpp
-    src/crypto/Encryptor.cpp
-    src/crypto/KeyExchange.cpp
+    src/audio/Resampler.cpp
     src/core/ProcessingPipeline.cpp
     src/plugins/PluginManager.cpp
 )
@@ -57,26 +72,25 @@ if(NDA_ENABLE_PYTHON)
     list(APPEND SOURCES src/plugins/PythonPluginBridge.cpp)
 endif()
 
-# Header files
+# Header files (v2.0: Unified view)
 set(HEADERS
     include/ui/MainWindow.h
-    include/ui/Dashboard.h
+    include/ui/UnifiedPipelineView.h
+    include/ui/PluginSidebar.h
     include/ui/AudioDevicesView.h
     include/ui/EncryptionView.h
     include/ui/PluginsView.h
     include/ui/SettingsView.h
-    include/ui/PipelineView.h
+    # DELETED: Dashboard.h, PipelineView.h (merged into UnifiedPipelineView)
     include/audio/AudioEngine.h
     include/audio/AudioDevice.h
     include/audio/AudioBuffer.h
-    include/crypto/Encryptor.h
-    include/crypto/KeyExchange.h
+    include/audio/Resampler.h
     include/core/ProcessingPipeline.h
     include/plugins/PluginTypes.h
     include/plugins/BasePlugin.h
     include/plugins/AudioSourcePlugin.h
-    include/plugins/BearerPlugin.h
-    include/plugins/EncryptorPlugin.h
+    include/plugins/AudioProcessorPlugin.h
     include/plugins/AudioSinkPlugin.h
     include/plugins/PluginManager.h
 )
@@ -98,6 +112,11 @@ target_link_libraries(${PROJECT_NAME}
     OpenSSL::SSL
     OpenSSL::Crypto
 )
+
+# Link libsamplerate if available
+if(SAMPLERATE_FOUND)
+    target_link_libraries(${PROJECT_NAME} ${SAMPLERATE_LIBRARIES})
+endif()
 
 # Link Python libraries if enabled
 if(NDA_ENABLE_PYTHON)
@@ -154,6 +173,9 @@ list(APPEND NDA_PLUGIN_TARGETS
     NullSinkPlugin
     WavFileSinkPlugin
 )
+
+# Add example processor plugins (AES256 Encryptor/Decryptor)
+# add_subdirectory(plugins_src/examples)
 
 # Platform-specific settings
 if(WIN32)

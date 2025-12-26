@@ -260,36 +260,99 @@ std::vector<LoadedPlugin> PluginManager::getAllPlugins() const
     return result;
 }
 
+std::shared_ptr<BasePlugin> PluginManager::createNewInstance(const std::string& name)
+{
+    auto it = plugins_.find(name);
+    if (it == plugins_.end()) {
+        return nullptr;
+    }
+    
+    const LoadedPlugin& loadedPlugin = it->second;
+    
+    // For Python plugins, create new instance
+    if (loadedPlugin.path.find(".py") != std::string::npos) {
+#ifdef NDA_ENABLE_PYTHON
+        std::filesystem::path pluginPath(loadedPlugin.path);
+        std::string filename = pluginPath.filename().string();
+        std::string directory = pluginPath.parent_path().string();
+        
+        PythonPluginBridge* bridge = PythonPluginFactory::createPlugin(filename, directory);
+        if (!bridge || !bridge->initialize()) {
+            if (bridge) delete bridge;
+            return nullptr;
+        }
+        
+        return std::shared_ptr<BasePlugin>(bridge);
+#else
+        return nullptr;
+#endif
+    }
+    
+    // For C++ plugins, call factory function again
+    if (loadedPlugin.libraryHandle) {
+        CreatePluginFunc createFunc = nullptr;
+        DestroyPluginFunc destroyFunc = nullptr;
+        
+#ifdef _WIN32
+        createFunc = reinterpret_cast<CreatePluginFunc>(
+            GetProcAddress(static_cast<HMODULE>(loadedPlugin.libraryHandle), "createPlugin"));
+        destroyFunc = reinterpret_cast<DestroyPluginFunc>(
+            GetProcAddress(static_cast<HMODULE>(loadedPlugin.libraryHandle), "destroyPlugin"));
+#else
+        createFunc = reinterpret_cast<CreatePluginFunc>(
+            dlsym(loadedPlugin.libraryHandle, "createPlugin"));
+        destroyFunc = reinterpret_cast<DestroyPluginFunc>(
+            dlsym(loadedPlugin.libraryHandle, "destroyPlugin"));
+#endif
+        
+        if (!createFunc || !destroyFunc) {
+            return nullptr;
+        }
+        
+        BasePlugin* rawInstance = createFunc();
+        if (!rawInstance || !validatePlugin(rawInstance)) {
+            if (rawInstance) destroyFunc(rawInstance);
+            return nullptr;
+        }
+        
+        std::shared_ptr<BasePlugin> instance(rawInstance, [destroyFunc](BasePlugin* p) {
+            destroyFunc(p);
+        });
+        
+        if (!instance->initialize()) {
+            return nullptr;
+        }
+        
+        return instance;
+    }
+    
+    return nullptr;
+}
+
 std::shared_ptr<AudioSourcePlugin> PluginManager::getAudioSourcePlugin(const std::string& name)
 {
-    auto plugin = getPlugin(name);
+    // Create NEW instance for this pipeline
+    auto plugin = createNewInstance(name);
     if (plugin && plugin->getType() == PluginType::AudioSource) {
         return std::dynamic_pointer_cast<AudioSourcePlugin>(plugin);
     }
     return nullptr;
 }
 
-std::shared_ptr<BearerPlugin> PluginManager::getBearerPlugin(const std::string& name)
+std::shared_ptr<AudioProcessorPlugin> PluginManager::getAudioProcessorPlugin(const std::string& name)
 {
-    auto plugin = getPlugin(name);
-    if (plugin && plugin->getType() == PluginType::Bearer) {
-        return std::dynamic_pointer_cast<BearerPlugin>(plugin);
-    }
-    return nullptr;
-}
-
-std::shared_ptr<EncryptorPlugin> PluginManager::getEncryptorPlugin(const std::string& name)
-{
-    auto plugin = getPlugin(name);
-    if (plugin && plugin->getType() == PluginType::Encryptor) {
-        return std::dynamic_pointer_cast<EncryptorPlugin>(plugin);
+    // Create NEW instance for this pipeline
+    auto plugin = createNewInstance(name);
+    if (plugin && plugin->getType() == PluginType::Processor) {
+        return std::dynamic_pointer_cast<AudioProcessorPlugin>(plugin);
     }
     return nullptr;
 }
 
 std::shared_ptr<AudioSinkPlugin> PluginManager::getAudioSinkPlugin(const std::string& name)
 {
-    auto plugin = getPlugin(name);
+    // Create NEW instance for this pipeline
+    auto plugin = createNewInstance(name);
     if (plugin && plugin->getType() == PluginType::AudioSink) {
         return std::dynamic_pointer_cast<AudioSinkPlugin>(plugin);
     }
