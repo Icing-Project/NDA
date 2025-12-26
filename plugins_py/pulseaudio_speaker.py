@@ -22,7 +22,7 @@ class PulseAudioSpeakerPlugin(AudioSinkPlugin):
     def __init__(self):
         super().__init__()
         self.sample_rate = 48000
-        self.channels = 2
+        self.channel_count = 2
         self.buffer_size = 512
         self.pyaudio_instance = None
         self.stream = None
@@ -59,7 +59,7 @@ class PulseAudioSpeakerPlugin(AudioSinkPlugin):
         try:
             self.stream = self.pyaudio_instance.open(
                 format=pyaudio.paFloat32,
-                channels=self.channels,
+                channels=self.channel_count,
                 rate=self.sample_rate,
                 output=True,
                 frames_per_buffer=self.buffer_size,
@@ -67,7 +67,7 @@ class PulseAudioSpeakerPlugin(AudioSinkPlugin):
             )
 
             self.state = PluginState.RUNNING
-            print(f"[PulseAudioSpeaker] Started - {self.sample_rate}Hz, {self.channels} channels", flush=True)
+            print(f"[PulseAudioSpeaker] Started - {self.sample_rate}Hz, {self.channel_count} channels", flush=True)
             return True
         except Exception as e:
             print(f"[PulseAudioSpeaker] Failed to start stream: {e}", flush=True)
@@ -121,7 +121,7 @@ class PulseAudioSpeakerPlugin(AudioSinkPlugin):
         if key == "sampleRate":
             return str(self.sample_rate)
         elif key == "channels":
-            return str(self.channels)
+            return str(self.channel_count)
         elif key == "bufferSize":
             return str(self.buffer_size)
         return ""
@@ -151,19 +151,19 @@ class PulseAudioSpeakerPlugin(AudioSinkPlugin):
         """Get sample rate"""
         return self.sample_rate
 
-    def get_channels(self) -> int:
+    def get_channel_count(self) -> int:
         """Get number of channels"""
-        return self.channels
+        return self.channel_count
 
     def set_sample_rate(self, sample_rate: int):
         """Set sample rate"""
         if self.state in (PluginState.UNLOADED, PluginState.INITIALIZED):
             self.sample_rate = sample_rate
 
-    def set_channels(self, channels: int):
+    def set_channel_count(self, channels: int):
         """Set number of channels"""
         if self.state in (PluginState.UNLOADED, PluginState.INITIALIZED):
-            self.channels = channels
+            self.channel_count = channels
 
     def get_buffer_size(self) -> int:
         """Get buffer size"""

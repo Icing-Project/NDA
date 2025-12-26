@@ -1,8 +1,8 @@
 #include "audio/AudioEngine.h"
-#include "crypto/Encryptor.h"
+// v2.0: Crypto removed from core - encryption is now handled by processor plugins
 
 AudioEngine::AudioEngine()
-    : encryptor_(nullptr), sampleRate_(48000), bufferSize_(512),
+    : sampleRate_(48000), bufferSize_(512),
       isRunning_(false), underruns_(0), threadHandle_(nullptr)
 {
     inputDevice_ = std::make_unique<AudioDevice>();
@@ -87,10 +87,7 @@ void AudioEngine::setOutputDevice(const std::string& deviceId)
     if (wasRunning) start();
 }
 
-void AudioEngine::setEncryptor(Encryptor* encryptor)
-{
-    encryptor_ = encryptor;
-}
+// v2.0: setEncryptor() removed - use processor plugins instead
 
 void AudioEngine::setAudioCallback(AudioCallback callback)
 {
@@ -129,10 +126,8 @@ void AudioEngine::processAudio(const AudioBuffer& input, AudioBuffer& output)
     // Copy input to output (bypass for now)
     output.copyFrom(input);
 
-    // Apply encryption if available
-    if (encryptor_) {
-        // Encrypt audio data
-    }
+    // v2.0: Encryption removed - use processor plugins instead
+    // Processors are managed by ProcessingPipeline, not AudioEngine
 
     // Call user callback if set
     if (callback_) {

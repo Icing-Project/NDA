@@ -19,7 +19,7 @@ class WavFileSinkPlugin(AudioSinkPlugin):
     def __init__(self):
         super().__init__()
         self.sample_rate = 48000
-        self.channels = 2
+        self.channel_count = 2
         self.buffer_size = 512
         self.total_frames = 0
         self.wav_file = None
@@ -59,7 +59,7 @@ class WavFileSinkPlugin(AudioSinkPlugin):
             self.state = PluginState.RUNNING
 
             print(f"[WavFileSink] Recording to: {self.current_filename}", flush=True)
-            print(f"[WavFileSink] Format: {self.sample_rate} Hz, {self.channels} channels, 32-bit float", flush=True)
+            print(f"[WavFileSink] Format: {self.sample_rate} Hz, {self.channel_count} channels, 32-bit float", flush=True)
 
             return True
         except Exception as e:
@@ -118,7 +118,7 @@ class WavFileSinkPlugin(AudioSinkPlugin):
         elif key == "sampleRate":
             return str(self.sample_rate)
         elif key == "channels":
-            return str(self.channels)
+            return str(self.channel_count)
         return ""
 
     def write_audio(self, buffer: AudioBuffer) -> bool:
@@ -155,7 +155,7 @@ class WavFileSinkPlugin(AudioSinkPlugin):
 
     def _write_wav_header(self, total_frames: int):
         """Write WAV file header"""
-        data_size = total_frames * self.channels * 4  # 4 bytes per float32
+        data_size = total_frames * self.channel_count * 4  # 4 bytes per float32
         file_size = 36 + data_size
 
         # RIFF header
@@ -167,10 +167,10 @@ class WavFileSinkPlugin(AudioSinkPlugin):
         self.wav_file.write(b'fmt ')
         self.wav_file.write(struct.pack('<I', 16))  # fmt chunk size
         self.wav_file.write(struct.pack('<H', 3))   # audio format (3 = IEEE float)
-        self.wav_file.write(struct.pack('<H', self.channels))
+        self.wav_file.write(struct.pack('<H', self.channel_count))
         self.wav_file.write(struct.pack('<I', self.sample_rate))
-        self.wav_file.write(struct.pack('<I', self.sample_rate * self.channels * 4))  # byte rate
-        self.wav_file.write(struct.pack('<H', self.channels * 4))  # block align
+        self.wav_file.write(struct.pack('<I', self.sample_rate * self.channel_count * 4))  # byte rate
+        self.wav_file.write(struct.pack('<H', self.channel_count * 4))  # block align
         self.wav_file.write(struct.pack('<H', 32))  # bits per sample
 
         # data chunk
@@ -181,19 +181,19 @@ class WavFileSinkPlugin(AudioSinkPlugin):
         """Get sample rate"""
         return self.sample_rate
 
-    def get_channels(self) -> int:
+    def get_channel_count(self) -> int:
         """Get number of channels"""
-        return self.channels
+        return self.channel_count
 
     def set_sample_rate(self, sample_rate: int):
         """Set sample rate"""
         if self.state in (PluginState.UNLOADED, PluginState.INITIALIZED):
             self.sample_rate = sample_rate
 
-    def set_channels(self, channels: int):
+    def set_channel_count(self, channels: int):
         """Set number of channels"""
         if self.state in (PluginState.UNLOADED, PluginState.INITIALIZED):
-            self.channels = channels
+            self.channel_count = channels
 
     def get_buffer_size(self) -> int:
         """Get buffer size"""

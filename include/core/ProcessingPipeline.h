@@ -2,10 +2,10 @@
 #define PROCESSINGPIPELINE_H
 
 #include "plugins/AudioSourcePlugin.h"
-#include "plugins/BearerPlugin.h"
-#include "plugins/EncryptorPlugin.h"
+#include "plugins/AudioProcessorPlugin.h"
 #include "plugins/AudioSinkPlugin.h"
 #include "audio/AudioBuffer.h"
+#include "audio/Resampler.h"
 #include <memory>
 #include <vector>
 #include <thread>
@@ -18,11 +18,10 @@ public:
     ProcessingPipeline();
     ~ProcessingPipeline();
 
-    // Pipeline configuration
-    bool setAudioSource(std::shared_ptr<AudioSourcePlugin> source);
-    bool setBearer(std::shared_ptr<BearerPlugin> bearer);
-    bool setEncryptor(std::shared_ptr<EncryptorPlugin> encryptor);
-    bool setAudioSink(std::shared_ptr<AudioSinkPlugin> sink);
+    // Pipeline configuration (3-slot architecture)
+    bool setSource(std::shared_ptr<AudioSourcePlugin> source);
+    bool setProcessor(std::shared_ptr<AudioProcessorPlugin> processor);  // Optional
+    bool setSink(std::shared_ptr<AudioSinkPlugin> sink);
 
     // Pipeline control
     bool initialize();
@@ -37,15 +36,30 @@ public:
     double getLatency() const;
     float getCPULoad() const;
     uint64_t getProcessedSamples() const;
+    void getPeakLevels(float& left, float& right) const;
+    
+    // v2.0: Measured metrics (not hardcoded)
+    uint64_t getDroppedSamples() const { return droppedSamples_; }
+    double getActualLatency() const;
+    float getActualCPULoad() const;
+    
+    // v2.0: Diagnostic counters
+    uint64_t getDriftWarnings() const { return driftWarnings_; }
+    uint64_t getBackpressureWaits() const { return backpressureWaits_; }
+    uint64_t getConsecutiveFailures() const { return consecutiveFailures_; }
+    uint64_t getProcessorFailures() const { return processorFailures_; }
+    
+    // v2.0: Runtime metrics
+    double getUptime() const;
+    double getRealTimeRatio() const;
 
 private:
     void processingThread();
     void processAudioFrame();
 
-    std::shared_ptr<AudioSourcePlugin> audioSource_;
-    std::shared_ptr<BearerPlugin> bearer_;
-    std::shared_ptr<EncryptorPlugin> encryptor_;
-    std::shared_ptr<AudioSinkPlugin> audioSink_;
+    std::shared_ptr<AudioSourcePlugin> source_;
+    std::shared_ptr<AudioProcessorPlugin> processor_;  // Optional (can be nullptr)
+    std::shared_ptr<AudioSinkPlugin> sink_;
 
     std::atomic<bool> isRunning_;
     std::unique_ptr<std::thread> processingThread_;
@@ -53,6 +67,22 @@ private:
     AudioBuffer workBuffer_;
     int frameCount_;
     uint64_t processedSamples_;
+    
+    // Sample rate adaptation (v2.0)
+    int targetSampleRate_;        // Pipeline internal rate (48000 default)
+    Resampler sourceResampler_;   // Source rate → 48kHz
+    Resampler sinkResampler_;     // 48kHz → sink rate
+    
+    // v2.0: Real-time pacing and metrics
+    std::chrono::steady_clock::time_point startTime_;
+    uint64_t droppedSamples_;
+    uint64_t driftWarnings_;
+    uint64_t backpressureWaits_;
+    uint64_t consecutiveFailures_;
+    uint64_t processorFailures_;
+
+    std::atomic<float> peakLeft_;
+    std::atomic<float> peakRight_;
 };
 
 } // namespace nda

@@ -156,13 +156,13 @@ class MyPlugin(AudioSourcePlugin):
     def get_sample_rate(self) -> int:
         return self.sample_rate
 
-    def get_channels(self) -> int:
+    def get_channel_count(self) -> int:
         return self.channels
 
     def set_sample_rate(self, sr: int):
         self.sample_rate = sr
 
-    def set_channels(self, ch: int):
+    def set_channel_count(self, ch: int):
         self.channels = ch
 
 def create_plugin():

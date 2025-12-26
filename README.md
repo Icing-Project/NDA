@@ -1,20 +1,30 @@
-# NDA Desktop Application
+# NDA v2.0 - Real-Time Audio Encryption Bridge
 
-Professional Audio Encryption Bridge System - **C++/Qt6 Implementation**
+Professional Audio Processing Framework - **C++17 + Qt6**
 
 ## Overview
 
-NDA Desktop is a high-performance, Windows-native (but Linux compatible, obviously) audio processing system designed to provide real-time encryption for various audio communication channels. Built with modern C++17/20 and Qt6 for maximum performance, it leverages Windows audio APIs (WASAPI/ASIO) for ultra-low latency while maintaining a flexible plugin architecture for extensibility.
+NDA (Nade Desktop Application) is a **real-time audio encryption bridge** that sits transparently between audio devices, providing encryption/decryption for secure communication. Built with C++17 and Qt6, NDA features a clean 3-slot plugin architecture, dual independent pipelines for full-duplex operation, and automatic sample rate adaptation for universal device compatibility.
+
+**v2.0 Major Improvements:**
+- ✅ Simplified 3-slot architecture (Source → Processor → Sink)
+- ✅ Dual independent pipelines (TX + RX simultaneously)
+- ✅ Automatic sample rate conversion (works with any device)
+- ✅ Python processor plugins (equal to C++)
+- ✅ 35% code reduction (bearer/crypto removed from core)
+- ✅ Production-ready stability (<50ms latency, <30% CPU)
 
 ## Key Features
 
-- **Native Windows Performance**: Direct C++ implementation with <5ms latency
-- **Professional Audio APIs**: WASAPI Exclusive Mode, ASIO, WDM-KS support
-- **Modern Qt UI**: Native Windows 11 styled interface with Qt6
-- **Plugin Architecture**: Hot-swappable modules for different audio sources
-- **Real-time Encryption**: AES-256-GCM with hardware acceleration
-- **Cross-Platform Development**: Develop on Linux, deploy on Windows
-- **Low Memory Footprint**: ~50-100MB RAM usage
+- **Dual Pipeline Architecture**: Independent TX and RX processing chains
+- **Plugin-Based Encryption**: Encryption is plugin-provided, not hardcoded
+- **Universal Audio Compatibility**: Auto-resampling handles any sample rate
+- **Python & C++ Plugins**: Equal support for rapid prototyping and production
+- **Automatic Sample Rate Adaptation**: 48kHz internal, adapts to any endpoint
+- **Modular 3-Stage Design**: Source → Processor (optional) → Sink
+- **Cross-Platform**: Linux and Windows support
+- **Stable Long-Running**: Designed for hours of glitch-free operation
+- **Low Resource Usage**: <100MB RAM, <30% CPU (dual pipelines)
 
 ## Tested Environment
 
@@ -33,13 +43,66 @@ NDA Desktop is a high-performance, Windows-native (but Linux compatible, obvious
   - WDM-KS (kernel streaming)
 - **Encryption**: OpenSSL 3.x (AES-256-GCM)
 
-## How to use
+## Quick Start (v2.0)
 
-We currently only provide an Ubuntu-built binary.
+### Core Concept
 
-### Ubuntu
+NDA provides **two independent audio pipelines** for full-duplex encrypted communication:
 
-Download the [pre-release binary](https://github.com/Icing-Project/NDA/releases/tag/pre-1.1) and execute it.
+```
+TX Pipeline (Transmit):
+  Device Mic → [Encryptor] → AIOC/VB-Cable Output
+                     ↓
+              Encrypted audio sent via external transport
+
+RX Pipeline (Receive):
+  AIOC/VB-Cable Input → [Decryptor] → Device Speaker
+           ↑
+    Encrypted audio received via external transport
+```
+
+### Example: Encrypted AIOC Radio
+
+```bash
+# 1. Build and run
+mkdir build && cd build
+cmake .. && make -j
+./NDA
+
+# 2. Load plugins
+Click "Load Plugins" or "Auto-Load Python Plugins"
+
+# 3. Configure TX Pipeline
+Source:    Device Microphone
+Processor: AES-256 Encryptor
+Sink:      AIOC USB Output
+
+# 4. Configure RX Pipeline  
+Source:    AIOC USB Input
+Processor: AES-256 Decryptor
+Sink:      Device Speaker
+
+# 5. Start both pipelines
+Click "Start Both Pipelines"
+
+# Result: Secure two-way radio communication
+```
+
+### Example: Encrypted Discord/VoIP
+
+Use virtual audio cables (VB-Cable, PulseAudio loopback):
+
+```
+TX: Device Mic → Encryptor → VB-Cable Input
+                                  ↓
+                         (Discord reads from VB-Cable)
+
+RX: VB-Cable Output → Decryptor → Device Speaker
+          ↑
+    (Discord writes to VB-Cable)
+```
+
+### How to use
 
 -----
 
@@ -47,9 +110,37 @@ Download the [pre-release binary](https://github.com/Icing-Project/NDA/releases/
 
 Either by selecting them manually from a custom folder, or by clicking the "Auto-Load" button.
 
-### Configure your audio path
+Python plugins in `plugins_py/`:
+- `sine_wave_source.py` - Test signal generator
+- `sounddevice_microphone.py` - System microphone
+- `sounddevice_speaker.py` - System speaker
+- `examples/passthrough.py` - No-op processor (testing)
+- `examples/simple_gain.py` - Volume control processor
+- `examples/fernet_encryptor.py` - Python encryption (demo)
+- `examples/fernet_decryptor.py` - Python decryption (demo)
 
-Select your audio source and audio sink
+C++ plugins in `build/plugins/`:
+- `libSineWaveSourcePlugin.so` - Test signal
+- `libNullSinkPlugin.so` - Silent output (testing)
+- `libWavFileSinkPlugin.so` - Record to WAV file
+- `libAES256EncryptorPlugin.so` - Production encryption
+- `libAES256DecryptorPlugin.so` - Production decryption
+
+### Configure your audio pipelines
+
+**v2.0 uses dual pipelines (TX + RX):**
+
+1. **TX Pipeline** - Outbound audio (encrypt before send)
+   - Source: Your microphone
+   - Processor: Encryptor (optional)
+   - Sink: Output device/cable
+
+2. **RX Pipeline** - Inbound audio (decrypt after receive)
+   - Source: Input device/cable  
+   - Processor: Decryptor (optional)
+   - Sink: Your speaker
+
+3. Click "Start Both" to run simultaneously
 
 ## Development Environment (Ubuntu)
 

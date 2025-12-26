@@ -24,7 +24,7 @@ class SoundDeviceMicrophonePlugin(AudioSourcePlugin):
     def __init__(self):
         super().__init__()
         self.sample_rate = 48000
-        self.channels = 1
+        self.channel_count = 1
         self.buffer_size = 256
         self.device = None
         self.device_name = ""
@@ -128,7 +128,7 @@ class SoundDeviceMicrophonePlugin(AudioSourcePlugin):
                     device=self.device
                 )
 
-            self.stream = _open(self.channels)
+            self.stream = _open(self.channel_count)
             self.stream.start()
             self._latency_upscaled = True
             self._latency_bumps += 1
@@ -167,21 +167,21 @@ class SoundDeviceMicrophonePlugin(AudioSourcePlugin):
                     device=self.device
                 )
 
-            try_channels = self.channels or 1
+            try_channels = self.channel_count or 1
             try:
                 self.stream = _open(try_channels)
-                self.channels = try_channels
+                self.channel_count = try_channels
             except Exception as e:
                 if try_channels != 1:
                     print(f"[SoundDeviceMic] Falling back to mono due to: {e}", flush=True)
                     self.stream = _open(1)
-                    self.channels = 1
+                    self.channel_count = 1
                 else:
                     raise
 
             self.stream.start()
             self.state = PluginState.RUNNING
-            print(f"[SoundDeviceMic] Started - {self.sample_rate}Hz, {self.channels} channels, block {self.buffer_size}, device '{self.device_name or self.device}'", flush=True)
+            print(f"[SoundDeviceMic] Started - {self.sample_rate}Hz, {self.channel_count} channels, block {self.buffer_size}, device '{self.device_name or self.device}'", flush=True)
             return True
         except Exception as e:
             print(f"[SoundDeviceMic] Failed to start: {e}", flush=True)
@@ -239,7 +239,7 @@ class SoundDeviceMicrophonePlugin(AudioSourcePlugin):
                 pass
         elif key == "channels":
             try:
-                self.set_channels(int(value))
+                self.set_channel_count(int(value))
             except ValueError:
                 pass
 
@@ -248,7 +248,7 @@ class SoundDeviceMicrophonePlugin(AudioSourcePlugin):
         if key == "sampleRate":
             return str(self.sample_rate)
         elif key == "channels":
-            return str(self.channels)
+            return str(self.channel_count)
         elif key == "bufferSize":
             return str(self.buffer_size)
         elif key == "autoScale":
@@ -301,9 +301,9 @@ class SoundDeviceMicrophonePlugin(AudioSourcePlugin):
         """Get sample rate"""
         return self.sample_rate
 
-    def get_channels(self) -> int:
+    def get_channel_count(self) -> int:
         """Get number of channels"""
-        return self.channels
+        return self.channel_count
 
     def get_buffer_size(self) -> int:
         """Get buffer size in frames"""
@@ -314,10 +314,10 @@ class SoundDeviceMicrophonePlugin(AudioSourcePlugin):
         if self.state in (PluginState.UNLOADED, PluginState.INITIALIZED):
             self.sample_rate = sample_rate
 
-    def set_channels(self, channels: int):
+    def set_channel_count(self, channels: int):
         """Set number of channels"""
         if self.state in (PluginState.UNLOADED, PluginState.INITIALIZED):
-            self.channels = max(1, channels)
+            self.channel_count = max(1, channels)
 
     def set_buffer_size(self, samples: int):
         """Set buffer size"""
