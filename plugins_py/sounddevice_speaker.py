@@ -3,7 +3,9 @@ SoundDevice Speaker Plugin - Python Implementation
 Plays audio through system speakers using sounddevice
 """
 
+import os
 import queue
+import time
 
 try:
     import sounddevice as sd
@@ -40,6 +42,42 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
         self._latency_bumps = 0
         self._log_under_notice = True
 
+        self._profile_enabled = self._is_truthy_env("NDA_PROFILE") or self._is_truthy_env("NDA_PROFILE_PYPLUGINS")
+        self._profile_interval_s = max(0.1, self._read_env_int("NDA_PROFILE_PYPLUGINS_INTERVAL_MS", 1000) / 1000.0)
+        self._profile_last_log = time.monotonic()
+
+        self._profile_write_calls = 0
+        self._profile_write_us_total = 0
+        self._profile_write_us_max = 0
+        self._profile_queue_full_events = 0
+
+        self._profile_cb_calls = 0
+        self._profile_cb_us_total = 0
+        self._profile_cb_us_max = 0
+        self._profile_cb_frames_total = 0
+        self._profile_cb_frames_min = None
+        self._profile_cb_frames_max = 0
+        self._profile_cb_queue_empty = 0
+        self._profile_cb_queue_qsize_min = None
+        self._profile_cb_queue_qsize_max = 0
+
+    @staticmethod
+    def _is_truthy_env(name: str) -> bool:
+        value = os.getenv(name)
+        if not value:
+            return False
+        return value.strip().lower() in ("1", "true", "yes", "on")
+
+    @staticmethod
+    def _read_env_int(name: str, default: int) -> int:
+        value = os.getenv(name)
+        if not value:
+            return default
+        try:
+            return int(value)
+        except ValueError:
+            return default
+
     def initialize(self) -> bool:
         """Initialize the plugin"""
         if not SOUNDDEVICE_AVAILABLE:
@@ -62,11 +100,32 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
         self.stop()
         self.state = PluginState.UNLOADED
 
-    def _audio_callback(self, outdata, frames, time, status):
+    def _audio_callback(self, outdata, frames, time_info, status):
         """Audio thread callback"""
+        t0 = time.perf_counter() if self._profile_enabled else 0.0
+
         if status:
             if getattr(status, "output_underflow", False) or "underflow" in str(status).lower():
                 self._handle_underflow()
+
+        if self._profile_enabled:
+            self._profile_cb_calls += 1
+            self._profile_cb_frames_total += int(frames)
+            if self._profile_cb_frames_min is None:
+                self._profile_cb_frames_min = int(frames)
+            else:
+                self._profile_cb_frames_min = min(self._profile_cb_frames_min, int(frames))
+            self._profile_cb_frames_max = max(self._profile_cb_frames_max, int(frames))
+
+            try:
+                qsize = int(self.audio_queue.qsize())
+                if self._profile_cb_queue_qsize_min is None:
+                    self._profile_cb_queue_qsize_min = qsize
+                else:
+                    self._profile_cb_queue_qsize_min = min(self._profile_cb_queue_qsize_min, qsize)
+                self._profile_cb_queue_qsize_max = max(self._profile_cb_queue_qsize_max, qsize)
+            except Exception:
+                pass
 
         try:
             data = self.audio_queue.get_nowait()
@@ -81,6 +140,13 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
         except queue.Empty:
             outdata.fill(0)
             self._handle_underflow()
+            if self._profile_enabled:
+                self._profile_cb_queue_empty += 1
+
+        if self._profile_enabled:
+            cb_us = int((time.perf_counter() - t0) * 1_000_000.0)
+            self._profile_cb_us_total += cb_us
+            self._profile_cb_us_max = max(self._profile_cb_us_max, cb_us)
 
     def _handle_underflow(self):
         """Track underruns and request latency bump if needed."""
@@ -287,6 +353,8 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
         if self.state != PluginState.RUNNING:
             return False
 
+        t0 = time.perf_counter() if self._profile_enabled else 0.0
+
         try:
             self._maybe_bump_latency()
 
@@ -314,7 +382,16 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
                 except queue.Full:
                     pass
                 self._overflow_count += 1
+                if self._profile_enabled:
+                    self._profile_queue_full_events += 1
                 return False
+
+            if self._profile_enabled:
+                dt_us = int((time.perf_counter() - t0) * 1_000_000.0)
+                self._profile_write_calls += 1
+                self._profile_write_us_total += dt_us
+                self._profile_write_us_max = max(self._profile_write_us_max, dt_us)
+                self._maybe_log_profile()
             return True
         except Exception as e:
             print(f"[SoundDeviceSpeaker] Write error: {e}", flush=True)
@@ -364,6 +441,56 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
             return max(0, free_slots * self.buffer_size)
         except Exception:
             return self.buffer_size
+
+    def _maybe_log_profile(self) -> None:
+        if not self._profile_enabled:
+            return
+
+        now = time.monotonic()
+        dt_s = now - self._profile_last_log
+        if dt_s < self._profile_interval_s:
+            return
+
+        write_avg_us = (self._profile_write_us_total / self._profile_write_calls) if self._profile_write_calls else 0.0
+        cb_avg_us = (self._profile_cb_us_total / self._profile_cb_calls) if self._profile_cb_calls else 0.0
+        cb_frames_avg = (
+            (self._profile_cb_frames_total / self._profile_cb_calls) if self._profile_cb_calls else 0.0
+        )
+
+        print(
+            "[SoundDeviceSpeakerProfile]"
+            f" dt={dt_s * 1000.0:.1f}ms"
+            f" sr={self.sample_rate}"
+            f" ch={self.channel_count}"
+            f" block={self.buffer_size}"
+            f" write(avgUs/maxUs)={write_avg_us:.0f}/{self._profile_write_us_max}"
+            f" qFull={self._profile_queue_full_events}"
+            f" cb(frames min/avg/max)={self._profile_cb_frames_min or 0}/{cb_frames_avg:.1f}/{self._profile_cb_frames_max}"
+            f" cb(avgUs/maxUs)={cb_avg_us:.0f}/{self._profile_cb_us_max}"
+            f" cbQueueEmpty={self._profile_cb_queue_empty}"
+            f" qsize(min/max)={self._profile_cb_queue_qsize_min or 0}/{self._profile_cb_queue_qsize_max}"
+            f" underruns={self._underflow_count}"
+            f" overflows={self._overflow_count}"
+            f" latencyMode={self.latency_mode}"
+            f" latencyBumps={self._latency_bumps}",
+            flush=True,
+        )
+
+        self._profile_last_log = now
+        self._profile_write_calls = 0
+        self._profile_write_us_total = 0
+        self._profile_write_us_max = 0
+        self._profile_queue_full_events = 0
+
+        self._profile_cb_calls = 0
+        self._profile_cb_us_total = 0
+        self._profile_cb_us_max = 0
+        self._profile_cb_frames_total = 0
+        self._profile_cb_frames_min = None
+        self._profile_cb_frames_max = 0
+        self._profile_cb_queue_empty = 0
+        self._profile_cb_queue_qsize_min = None
+        self._profile_cb_queue_qsize_max = 0
 
 
 # Plugin factory function

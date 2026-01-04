@@ -10,7 +10,7 @@ int main(int argc, char *argv[])
     // Set application metadata
     app.setApplicationName("NDA");
     app.setApplicationVersion("1.1.0");
-    app.setOrganizationName("NDA");
+    app.setOrganizationName("Icing Project");
 
     // Set modern dark theme
     app.setStyle(QStyleFactory::create("Fusion"));
@@ -191,10 +191,10 @@ int main(int argc, char *argv[])
 
     // Create and show main window
     MainWindow window;
-    
+
     // v2.0: Auto-load plugins on startup (no manual button clicks)
     window.autoLoadPlugins();
-    
+
     window.show();
 
     return app.exec();

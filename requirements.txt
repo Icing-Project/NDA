@@ -3,6 +3,7 @@
 
 # Audio I/O (cross-platform)
 sounddevice>=0.4.6
+soundcard>=0.4.2
 numpy>=1.20.0
 
 # Legacy PyAudio support (optional, sounddevice is preferred)
