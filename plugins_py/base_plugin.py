@@ -143,6 +143,10 @@ class AudioSourcePlugin(BasePlugin):
         """Get number of channels"""
         pass
 
+    # Compatibility aliases: the C++ Python bridge calls get_channels/set_channels.
+    def get_channels(self) -> int:
+        return self.get_channel_count()
+
     @abstractmethod
     def set_sample_rate(self, sample_rate: int):
         """Set sample rate"""
@@ -152,6 +156,9 @@ class AudioSourcePlugin(BasePlugin):
     def set_channel_count(self, channels: int):
         """Set number of channels"""
         pass
+
+    def set_channels(self, channels: int):
+        self.set_channel_count(channels)
 
     # Optional buffer sizing (frames per buffer). Sources can override if they
     # support configurable frame sizes.
@@ -183,6 +190,10 @@ class AudioSinkPlugin(BasePlugin):
         """Get number of channels"""
         pass
 
+    # Compatibility aliases: the C++ Python bridge calls get_channels/set_channels.
+    def get_channels(self) -> int:
+        return self.get_channel_count()
+
     @abstractmethod
     def set_sample_rate(self, sample_rate: int):
         """Set sample rate"""
@@ -192,6 +203,9 @@ class AudioSinkPlugin(BasePlugin):
     def set_channel_count(self, channels: int):
         """Set number of channels"""
         pass
+
+    def set_channels(self, channels: int):
+        self.set_channel_count(channels)
 
     @abstractmethod
     def get_buffer_size(self) -> int:
@@ -264,6 +278,10 @@ class AudioProcessorPlugin(BasePlugin):
             Number of channels (typically 2 for stereo)
         """
         pass
+
+    # Compatibility aliases: the C++ Python bridge calls get_channels/set_channels.
+    def get_channels(self) -> int:
+        return self.get_channel_count()
     
     @abstractmethod
     def set_sample_rate(self, rate: int) -> None:
@@ -284,6 +302,9 @@ class AudioProcessorPlugin(BasePlugin):
             channels: Number of channels
         """
         pass
+
+    def set_channels(self, channels: int) -> None:
+        self.set_channel_count(channels)
     
     def get_processing_latency(self) -> float:
         """

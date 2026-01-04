@@ -5,6 +5,7 @@
 #include "AudioSourcePlugin.h"
 #include "AudioSinkPlugin.h"
 #include "AudioProcessorPlugin.h"
+#include <memory>
 
 // Only compile if Python support is enabled
 #ifdef NDA_ENABLE_PYTHON
@@ -109,6 +110,7 @@ private:
     PyObject* pModule_;           // Python module object
     PyObject* pPluginInstance_;   // Python plugin instance
     PluginState state_;           // Current plugin state
+    std::string moduleName_;      // For diagnostics/profiling output
 
     static bool pythonInitialized_;  // Python interpreter initialized flag
     
@@ -132,6 +134,9 @@ private:
     void destroyCache();
     PyObject* getOrCreateCachedBuffer(const AudioBuffer& buffer);
     void updateCachedBufferData(const AudioBuffer& buffer, PyObject* pyBuffer);
+
+    struct ProfilingData;
+    mutable std::unique_ptr<ProfilingData> profiling_;
 };
 
 /**

@@ -2,6 +2,13 @@
 #include <iostream>
 #include <sstream>
 #include <cstring>  // For std::memcpy
+#include <chrono>
+#include <cstdlib>
+#include <algorithm>
+#include <limits>
+#include <iomanip>
+#include <string>
+#include <cctype>
 
 #ifdef NDA_ENABLE_PYTHON
 
@@ -16,10 +23,162 @@ static int initializeNumPy() {
     return 0;
 }
 
+namespace {
+
+bool isTruthyEnv(const char* name)
+{
+    const char* value = std::getenv(name);
+    if (!value) return false;
+
+    std::string s(value);
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+
+    return s == "1" || s == "true" || s == "yes" || s == "on";
+}
+
+int readEnvInt(const char* name, int defaultValue)
+{
+    const char* value = std::getenv(name);
+    if (!value) return defaultValue;
+
+    try {
+        return std::stoi(value);
+    } catch (...) {
+        return defaultValue;
+    }
+}
+
+uint64_t toMicros(std::chrono::steady_clock::duration d)
+{
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(d).count());
+}
+
+} // namespace
+
+struct PythonPluginBridge::ProfilingData
+{
+    struct Stat
+    {
+        uint64_t count = 0;
+        uint64_t totalUs = 0;
+        uint64_t maxUs = 0;
+
+        void add(uint64_t us)
+        {
+            totalUs += us;
+            count++;
+            if (us > maxUs) maxUs = us;
+        }
+
+        void reset()
+        {
+            count = 0;
+            totalUs = 0;
+            maxUs = 0;
+        }
+
+        double avgUs() const
+        {
+            return count ? static_cast<double>(totalUs) / static_cast<double>(count) : 0.0;
+        }
+    };
+
+    std::chrono::steady_clock::time_point lastLogTime{};
+    std::chrono::milliseconds logInterval{1000};
+
+    Stat readTotalUs{};
+    Stat readGILUs{};
+    Stat readBufferUs{};
+    Stat readPyCallUs{};
+    Stat readCopyUs{};
+
+    Stat writeTotalUs{};
+    Stat writeGILUs{};
+    Stat writeBufferUs{};
+    Stat writeCopyToPyUs{};
+    Stat writePyCallUs{};
+
+    Stat availTotalUs{};
+    Stat availGILUs{};
+    Stat availPyCallUs{};
+
+    uint64_t readErrors = 0;
+    uint64_t writeErrors = 0;
+    uint64_t availErrors = 0;
+
+    void reset(std::chrono::steady_clock::time_point now)
+    {
+        lastLogTime = now;
+        readTotalUs.reset();
+        readGILUs.reset();
+        readBufferUs.reset();
+        readPyCallUs.reset();
+        readCopyUs.reset();
+
+        writeTotalUs.reset();
+        writeGILUs.reset();
+        writeBufferUs.reset();
+        writeCopyToPyUs.reset();
+        writePyCallUs.reset();
+
+        availTotalUs.reset();
+        availGILUs.reset();
+        availPyCallUs.reset();
+
+        readErrors = 0;
+        writeErrors = 0;
+        availErrors = 0;
+    }
+
+    void maybeLog(std::chrono::steady_clock::time_point now, const std::string& label)
+    {
+        if (lastLogTime.time_since_epoch().count() == 0) {
+            reset(now);
+            return;
+        }
+
+        auto dt = now - lastLogTime;
+        if (dt < logInterval) return;
+
+        const double dtMs = std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(dt).count();
+
+        std::cout << std::fixed << std::setprecision(2);
+        std::cout << "[PythonBridgeProfile:" << (label.empty() ? "unknown" : label) << "]"
+                  << " dt=" << dtMs << "ms"
+                  << " read(avgUs total/gil/buf/py/copy)="
+                  << readTotalUs.avgUs() << "/"
+                  << readGILUs.avgUs() << "/"
+                  << readBufferUs.avgUs() << "/"
+                  << readPyCallUs.avgUs() << "/"
+                  << readCopyUs.avgUs()
+                  << " write(avgUs total/gil/buf/copy/py)="
+                  << writeTotalUs.avgUs() << "/"
+                  << writeGILUs.avgUs() << "/"
+                  << writeBufferUs.avgUs() << "/"
+                  << writeCopyToPyUs.avgUs() << "/"
+                  << writePyCallUs.avgUs()
+                  << " avail(avgUs total/gil/py)="
+                  << availTotalUs.avgUs() << "/"
+                  << availGILUs.avgUs() << "/"
+                  << availPyCallUs.avgUs()
+                  << " maxUs(gilRead/gilWrite/gilAvail)="
+                  << readGILUs.maxUs << "/"
+                  << writeGILUs.maxUs << "/"
+                  << availGILUs.maxUs
+                  << " errors(r/w/a)=" << readErrors << "/" << writeErrors << "/" << availErrors
+                  << std::endl;
+
+        reset(now);
+    }
+};
+
 PythonPluginBridge::PythonPluginBridge()
     : pModule_(nullptr)
     , pPluginInstance_(nullptr)
     , state_(PluginState::Unloaded)
+    , moduleName_()
     // v2.0 Optimization: Initialize cache members
     , cachedBasePluginModule_(nullptr)
     , cachedAudioBufferClass_(nullptr)
@@ -30,7 +189,15 @@ PythonPluginBridge::PythonPluginBridge()
     , cachedProcessAudioMethod_(nullptr)
     , cachedChannels_(0)
     , cachedFrames_(0)
+    , profiling_(nullptr)
 {
+    if (isTruthyEnv("NDA_PROFILE") || isTruthyEnv("NDA_PROFILE_PYBRIDGE")) {
+        profiling_ = std::make_unique<ProfilingData>();
+        const int intervalMs = std::max(100, readEnvInt("NDA_PROFILE_PYBRIDGE_INTERVAL_MS", 1000));
+        profiling_->logInterval = std::chrono::milliseconds(intervalMs);
+        std::cout << "[PythonBridgeProfile] Enabled (interval " << intervalMs << "ms)" << std::endl;
+    }
+
     if (!pythonInitialized_) {
         Py_Initialize();
         // Initialize NumPy C API
@@ -112,6 +279,7 @@ bool PythonPluginBridge::loadPlugin(const std::string& pluginPath, const std::st
     if (moduleName.size() > 3 && moduleName.substr(moduleName.size() - 3) == ".py") {
         moduleName = moduleName.substr(0, moduleName.size() - 3);
     }
+    moduleName_ = moduleName;
 
     // Import the module
     PyObject* pName = PyUnicode_FromString(moduleName.c_str());
@@ -179,6 +347,9 @@ bool PythonPluginBridge::initialize() {
 
     // Release GIL
     PyGILState_Release(gstate);
+    if (success && profiling_) {
+        profiling_->reset(std::chrono::steady_clock::now());
+    }
     return success;
 }
 
@@ -465,24 +636,46 @@ bool PythonPluginBridge::readAudio(AudioBuffer& buffer) {
         return false;
     }
 
+    const auto totalStart = std::chrono::steady_clock::now();
+
     // OPTIMIZATION: Batch GIL operations (acquire ONCE per frame)
+    const auto gilStart = totalStart;
     PyGILState_STATE gstate = PyGILState_Ensure();
+    const auto afterGIL = std::chrono::steady_clock::now();
+    if (profiling_) {
+        profiling_->readGILUs.add(toMicros(afterGIL - gilStart));
+    }
+
+    auto finish = [&](bool ok) {
+        PyGILState_Release(gstate);
+        if (profiling_) {
+            const auto now = std::chrono::steady_clock::now();
+            profiling_->readTotalUs.add(toMicros(now - totalStart));
+            profiling_->maybeLog(now, moduleName_);
+        }
+        return ok;
+    };
 
     // OPTIMIZATION: Use cached buffer (avoid repeated allocation)
+    const auto bufferStart = std::chrono::steady_clock::now();
     PyObject* pBuffer = getOrCreateCachedBuffer(buffer);
     if (!pBuffer) {
         // Fallback to legacy method
         pBuffer = createPythonAudioBuffer(buffer);
         if (!pBuffer) {
-            PyGILState_Release(gstate);
-            return false;
+            if (profiling_) profiling_->readErrors++;
+            return finish(false);
         }
     } else {
         // OPTIMIZATION: Fast memcpy data update (not needed for read, but prepare buffer)
         // For readAudio, Python fills the buffer, so we don't need to copy TO Python
     }
+    if (profiling_) {
+        profiling_->readBufferUs.add(toMicros(std::chrono::steady_clock::now() - bufferStart));
+    }
 
     // OPTIMIZATION: Use cached method object (avoid attribute lookup)
+    const auto pyCallStart = std::chrono::steady_clock::now();
     PyObject* result = nullptr;
     if (cachedReadAudioMethod_) {
         result = PyObject_CallFunctionObjArgs(
@@ -492,14 +685,21 @@ bool PythonPluginBridge::readAudio(AudioBuffer& buffer) {
         // Fallback
         result = PyObject_CallMethod(pPluginInstance_, "read_audio", "O", pBuffer);
     }
-    
+     
     if (!result) {
         PyErr_Print();
         if (!cachedBufferInstance_ || pBuffer != cachedBufferInstance_) {
             Py_DECREF(pBuffer);
         }
-        PyGILState_Release(gstate);
-        return false;
+        if (profiling_) {
+            profiling_->readPyCallUs.add(toMicros(std::chrono::steady_clock::now() - pyCallStart));
+            profiling_->readErrors++;
+        }
+        return finish(false);
+    }
+
+    if (profiling_) {
+        profiling_->readPyCallUs.add(toMicros(std::chrono::steady_clock::now() - pyCallStart));
     }
 
     bool success = PyObject_IsTrue(result);
@@ -507,7 +707,11 @@ bool PythonPluginBridge::readAudio(AudioBuffer& buffer) {
 
     if (success) {
         // Copy data back from Python buffer to C++ buffer
+        const auto copyStart = std::chrono::steady_clock::now();
         copyFromPythonBuffer(pBuffer, buffer);
+        if (profiling_) {
+            profiling_->readCopyUs.add(toMicros(std::chrono::steady_clock::now() - copyStart));
+        }
     }
 
     // Don't DECREF if using cached buffer
@@ -515,8 +719,7 @@ bool PythonPluginBridge::readAudio(AudioBuffer& buffer) {
         Py_DECREF(pBuffer);
     }
 
-    PyGILState_Release(gstate);
-    return success;
+    return finish(success);
 }
 
 bool PythonPluginBridge::writeAudio(const AudioBuffer& buffer) {
@@ -524,25 +727,51 @@ bool PythonPluginBridge::writeAudio(const AudioBuffer& buffer) {
         return false;
     }
 
+    const auto totalStart = std::chrono::steady_clock::now();
+
     // OPTIMIZATION: Batch GIL operations (acquire ONCE per frame)
+    const auto gilStart = totalStart;
     PyGILState_STATE gstate = PyGILState_Ensure();
+    const auto afterGIL = std::chrono::steady_clock::now();
+    if (profiling_) {
+        profiling_->writeGILUs.add(toMicros(afterGIL - gilStart));
+    }
+
+    auto finish = [&](bool ok) {
+        PyGILState_Release(gstate);
+        if (profiling_) {
+            const auto now = std::chrono::steady_clock::now();
+            profiling_->writeTotalUs.add(toMicros(now - totalStart));
+            profiling_->maybeLog(now, moduleName_);
+        }
+        return ok;
+    };
 
     // OPTIMIZATION: Use cached buffer (avoid repeated allocation)
     // Note: Need to cast away const for getOrCreateCachedBuffer
+    const auto bufferStart = std::chrono::steady_clock::now();
     PyObject* pBuffer = getOrCreateCachedBuffer(const_cast<AudioBuffer&>(buffer));
     if (!pBuffer) {
         // Fallback to legacy method
         pBuffer = createPythonAudioBuffer(buffer);
         if (!pBuffer) {
-            PyGILState_Release(gstate);
-            return false;
+            if (profiling_) profiling_->writeErrors++;
+            return finish(false);
         }
     } else {
         // OPTIMIZATION: Fast memcpy data update (copy TO Python for write)
+        const auto copyStart = std::chrono::steady_clock::now();
         updateCachedBufferData(buffer, pBuffer);
+        if (profiling_) {
+            profiling_->writeCopyToPyUs.add(toMicros(std::chrono::steady_clock::now() - copyStart));
+        }
+    }
+    if (profiling_) {
+        profiling_->writeBufferUs.add(toMicros(std::chrono::steady_clock::now() - bufferStart));
     }
 
     // OPTIMIZATION: Use cached method object (avoid attribute lookup)
+    const auto pyCallStart = std::chrono::steady_clock::now();
     PyObject* result = nullptr;
     if (cachedWriteAudioMethod_) {
         result = PyObject_CallFunctionObjArgs(
@@ -552,26 +781,32 @@ bool PythonPluginBridge::writeAudio(const AudioBuffer& buffer) {
         // Fallback
         result = PyObject_CallMethod(pPluginInstance_, "write_audio", "O", pBuffer);
     }
-    
+     
     if (!result) {
         PyErr_Print();
         if (!cachedBufferInstance_ || pBuffer != cachedBufferInstance_) {
             Py_DECREF(pBuffer);
         }
-        PyGILState_Release(gstate);
-        return false;
+        if (profiling_) {
+            profiling_->writePyCallUs.add(toMicros(std::chrono::steady_clock::now() - pyCallStart));
+            profiling_->writeErrors++;
+        }
+        return finish(false);
+    }
+
+    if (profiling_) {
+        profiling_->writePyCallUs.add(toMicros(std::chrono::steady_clock::now() - pyCallStart));
     }
 
     bool success = PyObject_IsTrue(result);
     Py_DECREF(result);
-    
+     
     // Don't DECREF if using cached buffer
     if (!cachedBufferInstance_ || pBuffer != cachedBufferInstance_) {
         Py_DECREF(pBuffer);
     }
 
-    PyGILState_Release(gstate);
-    return success;
+    return finish(success);
 }
 
 void PythonPluginBridge::setAudioCallback(AudioSourceCallback callback) {
@@ -671,21 +906,39 @@ void PythonPluginBridge::setBufferSize(int samples) {
 int PythonPluginBridge::getAvailableSpace() const {
     if (!pPluginInstance_) return 512;
 
-    // Acquire GIL for thread-safe Python API calls
-    PyGILState_STATE gstate = PyGILState_Ensure();
+    const auto totalStart = std::chrono::steady_clock::now();
 
-    PyObject* result = PyObject_CallMethod(pPluginInstance_, "get_available_space", nullptr);
-    if (!result) {
-        PyErr_Print();
-        PyGILState_Release(gstate);
-        return 512;
+    // Acquire GIL for thread-safe Python API calls
+    const auto gilStart = totalStart;
+    PyGILState_STATE gstate = PyGILState_Ensure();
+    const auto afterGIL = std::chrono::steady_clock::now();
+    if (profiling_) {
+        profiling_->availGILUs.add(toMicros(afterGIL - gilStart));
     }
 
-    int space = PyLong_AsLong(result);
-    Py_DECREF(result);
+    const auto pyCallStart = std::chrono::steady_clock::now();
+    PyObject* result = PyObject_CallMethod(pPluginInstance_, "get_available_space", nullptr);
+    if (profiling_) {
+        profiling_->availPyCallUs.add(toMicros(std::chrono::steady_clock::now() - pyCallStart));
+    }
 
-    // Release GIL
+    int space = 512;
+    if (!result) {
+        PyErr_Print();
+        if (profiling_) profiling_->availErrors++;
+    } else {
+        space = PyLong_AsLong(result);
+        Py_DECREF(result);
+    }
+
     PyGILState_Release(gstate);
+
+    if (profiling_) {
+        const auto now = std::chrono::steady_clock::now();
+        profiling_->availTotalUs.add(toMicros(now - totalStart));
+        profiling_->maybeLog(now, moduleName_);
+    }
+
     return space;
 }
 
