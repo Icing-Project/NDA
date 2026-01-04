@@ -3,6 +3,10 @@ PulseAudio Speaker Plugin - Python Implementation
 Plays audio through system speakers using PulseAudio
 """
 
+import sys
+
+PLATFORM_SUPPORTED = sys.platform.startswith("linux")
+
 try:
     import pyaudio
     PYAUDIO_AVAILABLE = True
@@ -29,6 +33,15 @@ class PulseAudioSpeakerPlugin(AudioSinkPlugin):
 
     def initialize(self) -> bool:
         """Initialize the plugin"""
+        if not PLATFORM_SUPPORTED:
+            print(
+                "[PulseAudioSpeaker] PulseAudio plugin is Linux-only. "
+                "Use sounddevice_speaker on Windows/macOS.",
+                flush=True,
+            )
+            self.state = PluginState.ERROR
+            return False
+
         if not PYAUDIO_AVAILABLE:
             print("[PulseAudioSpeaker] PyAudio not available. Install with: pip install pyaudio")
             self.state = PluginState.ERROR
