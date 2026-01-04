@@ -41,6 +41,34 @@ PythonPluginBridge::PythonPluginBridge()
         // The GIL is automatically initialized by Py_Initialize()
         pythonInitialized_ = true;
         std::cout << "[PythonBridge] Python interpreter initialized" << std::endl;
+
+        std::cout << "[PythonBridge] Python version: " << Py_GetVersion() << std::endl;
+        PyObject* sysModule = PyImport_ImportModule("sys");
+        if (sysModule) {
+            auto printSysStringAttr = [](PyObject* sysObj, const char* attrName, const char* label) {
+                PyObject* value = PyObject_GetAttrString(sysObj, attrName);
+                if (!value) {
+                    PyErr_Clear();
+                    return;
+                }
+
+                const char* utf8 = PyUnicode_Check(value) ? PyUnicode_AsUTF8(value) : nullptr;
+                if (utf8) {
+                    std::cout << "[PythonBridge] " << label << ": " << utf8 << std::endl;
+                } else {
+                    PyErr_Clear();
+                }
+
+                Py_DECREF(value);
+            };
+
+            printSysStringAttr(sysModule, "executable", "sys.executable");
+            printSysStringAttr(sysModule, "prefix", "sys.prefix");
+            printSysStringAttr(sysModule, "base_prefix", "sys.base_prefix");
+            Py_DECREF(sysModule);
+        } else {
+            PyErr_Clear();
+        }
     }
 }
 
