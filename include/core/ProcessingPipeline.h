@@ -10,6 +10,7 @@
 #include <vector>
 #include <thread>
 #include <atomic>
+#include <chrono>
 
 namespace nda {
 
@@ -83,6 +84,9 @@ private:
 
     std::atomic<float> peakLeft_;
     std::atomic<float> peakRight_;
+
+    struct ProfilingData;
+    std::unique_ptr<ProfilingData> profiling_;
 };
 
 } // namespace nda

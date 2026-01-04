@@ -18,7 +18,7 @@ cd plugins_py
 
 Or manually:
 ```bash
-pip install numpy pyaudio
+pip install -r requirements.txt
 ```
 
 ## 2. Test Plugins
@@ -29,9 +29,9 @@ python test_plugins.py
 
 You should see:
 - List of available plugins
-- Sine wave generator test (3 seconds)
-- WAV file recording test (2 seconds)
-- A new WAV file: `recording_YYYYMMDD_HHMMSS.wav`
+- Sine wave generator test (~2 seconds)
+- WAV file recording test (~1 second)
+- A new WAV file: `test_recording.wav`
 
 ## 3. Use from Python
 
@@ -101,6 +101,10 @@ delete plugin;
 | `wav_file_sink` | Sink | WAV file recorder |
 | `pulseaudio_microphone` | Source | Mic input |
 | `pulseaudio_speaker` | Sink | Speaker output |
+| `sounddevice_microphone` | Source | Mic input via sounddevice (PortAudio) |
+| `sounddevice_speaker` | Sink | Speaker output via sounddevice (PortAudio) |
+| `soundcard_microphone` | Source | Mic input via soundcard (WASAPI/PulseAudio) |
+| `soundcard_speaker` | Sink | Speaker output via soundcard (WASAPI/PulseAudio) |
 
 ## 6. Create Your Own Plugin
 
@@ -196,6 +200,13 @@ sudo dnf install python3-pyaudio
 # Ubuntu
 sudo apt install python3-pyaudio
 ```
+
+### "Module not found: soundcard"
+```bash
+pip install soundcard
+```
+
+Linux note: soundcard needs PulseAudio, or PipeWire with `pipewire-pulse` enabled.
 
 ### Plugins not loading from C++
 - Make sure `plugins_py` directory is in your working directory
