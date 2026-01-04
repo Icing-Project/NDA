@@ -98,6 +98,10 @@ void MainWindow::onStatusUpdate(const QString &message)
 void MainWindow::autoLoadPlugins()
 {
     if (!pluginManager_) return;
+
+#ifndef NDA_ENABLE_PYTHON
+    qDebug() << "Python plugin support is disabled in this build; .py plugins will not be loaded";
+#endif
     
     // Auto-discover plugins from standard directories
     const QString appDir = QCoreApplication::applicationDirPath();

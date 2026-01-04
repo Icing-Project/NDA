@@ -4,6 +4,10 @@ Captures audio from system microphone using PulseAudio
 Uses callback mode with ring buffer for reliable, non-blocking operation
 """
 
+import sys
+
+PLATFORM_SUPPORTED = sys.platform.startswith("linux")
+
 try:
     import pyaudio
     PYAUDIO_AVAILABLE = True
@@ -38,6 +42,15 @@ class PulseAudioMicrophonePlugin(AudioSourcePlugin):
 
     def initialize(self) -> bool:
         """Initialize the plugin"""
+        if not PLATFORM_SUPPORTED:
+            print(
+                "[PulseAudioMic] PulseAudio plugin is Linux-only. "
+                "Use sounddevice_microphone on Windows/macOS.",
+                flush=True,
+            )
+            self.state = PluginState.ERROR
+            return False
+
         if not PYAUDIO_AVAILABLE:
             print("[PulseAudioMic] PyAudio not available. Install with: pip install pyaudio", flush=True)
             self.state = PluginState.ERROR

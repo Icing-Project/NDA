@@ -10,7 +10,23 @@
 #ifdef NDA_ENABLE_PYTHON
 
 #define PY_SSIZE_T_CLEAN
+#ifdef _MSC_VER
+// On Windows, CPython headers enable debug ABI (`Py_DEBUG`) when `_DEBUG` is set,
+// which requires a debug-build CPython (python3x_d.lib + debug-only symbols).
+// NDA typically embeds a standard release CPython, so temporarily hide `_DEBUG`
+// while including Python headers and then restore it.
+#ifdef _DEBUG
+#define NDA_RESTORE_DEBUG 1
+#undef _DEBUG
+#endif
+#endif
 #include <Python.h>
+#ifdef _MSC_VER
+#ifdef NDA_RESTORE_DEBUG
+#define _DEBUG
+#undef NDA_RESTORE_DEBUG
+#endif
+#endif
 
 // Include numpy for audio buffer conversion
 #define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
