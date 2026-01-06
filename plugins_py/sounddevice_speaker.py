@@ -5,6 +5,7 @@ Plays audio through system speakers using sounddevice
 
 import os
 import queue
+import threading
 import time
 
 try:
@@ -42,6 +43,9 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
         self._latency_bumps = 0
         self._log_under_notice = True
 
+        self._control_thread = None
+        self._control_stop_event = threading.Event()
+
         self._profile_enabled = self._is_truthy_env("NDA_PROFILE") or self._is_truthy_env("NDA_PROFILE_PYPLUGINS")
         self._profile_interval_s = max(0.1, self._read_env_int("NDA_PROFILE_PYPLUGINS_INTERVAL_MS", 1000) / 1000.0)
         self._profile_last_log = time.monotonic()
@@ -60,6 +64,11 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
         self._profile_cb_queue_empty = 0
         self._profile_cb_queue_qsize_min = None
         self._profile_cb_queue_qsize_max = 0
+        self._profile_cb_last_t = None
+        self._profile_cb_dt_us_total = 0
+        self._profile_cb_dt_us_count = 0
+        self._profile_cb_dt_us_min = None
+        self._profile_cb_dt_us_max = 0
 
     @staticmethod
     def _is_truthy_env(name: str) -> bool:
@@ -102,7 +111,7 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
 
     def _audio_callback(self, outdata, frames, time_info, status):
         """Audio thread callback"""
-        t0 = time.perf_counter() if self._profile_enabled else 0.0
+        cb_start = time.perf_counter() if self._profile_enabled else 0.0
 
         if status:
             if getattr(status, "output_underflow", False) or "underflow" in str(status).lower():
@@ -110,6 +119,16 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
 
         if self._profile_enabled:
             self._profile_cb_calls += 1
+            if self._profile_cb_last_t is not None:
+                dt_us = int((cb_start - self._profile_cb_last_t) * 1_000_000.0)
+                self._profile_cb_dt_us_total += dt_us
+                self._profile_cb_dt_us_count += 1
+                if self._profile_cb_dt_us_min is None:
+                    self._profile_cb_dt_us_min = dt_us
+                else:
+                    self._profile_cb_dt_us_min = min(self._profile_cb_dt_us_min, dt_us)
+                self._profile_cb_dt_us_max = max(self._profile_cb_dt_us_max, dt_us)
+            self._profile_cb_last_t = cb_start
             self._profile_cb_frames_total += int(frames)
             if self._profile_cb_frames_min is None:
                 self._profile_cb_frames_min = int(frames)
@@ -144,7 +163,7 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
                 self._profile_cb_queue_empty += 1
 
         if self._profile_enabled:
-            cb_us = int((time.perf_counter() - t0) * 1_000_000.0)
+            cb_us = int((time.perf_counter() - cb_start) * 1_000_000.0)
             self._profile_cb_us_total += cb_us
             self._profile_cb_us_max = max(self._profile_cb_us_max, cb_us)
 
@@ -167,6 +186,7 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
             return False
 
         try:
+            self._control_stop_event.clear()
             self.audio_queue = queue.Queue(maxsize=self.max_queue_buffers)
             self._underflow_count = 0
             self._overflow_count = 0
@@ -174,6 +194,28 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
             self._needs_latency_bump = False
             self._latency_bumps = 0
             self._log_under_notice = True
+
+            if self._profile_enabled:
+                self._profile_last_log = time.monotonic()
+                self._profile_write_calls = 0
+                self._profile_write_us_total = 0
+                self._profile_write_us_max = 0
+                self._profile_queue_full_events = 0
+
+                self._profile_cb_calls = 0
+                self._profile_cb_us_total = 0
+                self._profile_cb_us_max = 0
+                self._profile_cb_frames_total = 0
+                self._profile_cb_frames_min = None
+                self._profile_cb_frames_max = 0
+                self._profile_cb_queue_empty = 0
+                self._profile_cb_queue_qsize_min = None
+                self._profile_cb_queue_qsize_max = 0
+                self._profile_cb_last_t = None
+                self._profile_cb_dt_us_total = 0
+                self._profile_cb_dt_us_count = 0
+                self._profile_cb_dt_us_min = None
+                self._profile_cb_dt_us_max = 0
 
             silence = np.zeros((self.buffer_size, self.channel_count), dtype=np.float32)
             try:
@@ -206,6 +248,14 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
                     raise
 
             self.stream.start()
+
+            self._control_thread = threading.Thread(
+                target=self._control_loop,
+                name="SoundDeviceSpeakerControl",
+                daemon=True,
+            )
+            self._control_thread.start()
+
             self.state = PluginState.RUNNING
             print(f"[SoundDeviceSpeaker] Started - {self.sample_rate}Hz, {self.channel_count} channels, block {self.buffer_size}, device '{self.device_name or self.device}'", flush=True)
             return True
@@ -227,8 +277,27 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
             return None
         return "high" if self._latency_upscaled else "low"
 
+    def _control_loop(self) -> None:
+        try:
+            while not self._control_stop_event.is_set():
+                if self._needs_latency_bump:
+                    self._maybe_bump_latency()
+                if self._control_stop_event.wait(timeout=0.05):
+                    break
+        except Exception:
+            return
+
+    def _drain_queue(self) -> None:
+        try:
+            while True:
+                self.audio_queue.get_nowait()
+        except queue.Empty:
+            return
+
     def _maybe_bump_latency(self):
         """Reopen stream with higher latency if requested."""
+        if self._control_stop_event.is_set():
+            return
         if not self.auto_scale_enabled or not self._needs_latency_bump or self._latency_upscaled:
             return
         self._needs_latency_bump = False
@@ -238,14 +307,16 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
                 self.stream.close()
                 self.stream = None
 
-            maxsize = self.audio_queue.maxsize or self.max_queue_buffers
-            self.audio_queue = queue.Queue(maxsize=maxsize)
+            self._drain_queue()
             silence = np.zeros((self.buffer_size, self.channel_count), dtype=np.float32)
             try:
                 self.audio_queue.put_nowait(silence)
                 self.audio_queue.put_nowait(silence.copy())
             except queue.Full:
                 pass
+
+            if self._control_stop_event.is_set():
+                return
 
             def _open(channels: int):
                 return sd.OutputStream(
@@ -276,6 +347,11 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
     def stop(self):
         """Stop playing audio"""
         try:
+            self._control_stop_event.set()
+            if self._control_thread and self._control_thread.is_alive():
+                self._control_thread.join(timeout=2.0)
+            self._control_thread = None
+
             if self.stream:
                 self.stream.stop()
                 self.stream.close()
@@ -356,8 +432,6 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
         t0 = time.perf_counter() if self._profile_enabled else 0.0
 
         try:
-            self._maybe_bump_latency()
-
             in_channels = buffer.data.shape[0]
 
             if in_channels == self.channel_count:
@@ -374,9 +448,11 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
             try:
                 self.audio_queue.put_nowait(outdata)
             except queue.Full:
+                replaced = False
                 try:
                     self.audio_queue.get_nowait()
                     self.audio_queue.put_nowait(outdata)
+                    replaced = True
                 except queue.Empty:
                     pass
                 except queue.Full:
@@ -384,7 +460,8 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
                 self._overflow_count += 1
                 if self._profile_enabled:
                     self._profile_queue_full_events += 1
-                return False
+                if not replaced:
+                    return False
 
             if self._profile_enabled:
                 dt_us = int((time.perf_counter() - t0) * 1_000_000.0)
@@ -452,10 +529,17 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
             return
 
         write_avg_us = (self._profile_write_us_total / self._profile_write_calls) if self._profile_write_calls else 0.0
+        write_hz = (self._profile_write_calls / dt_s) if dt_s > 0 else 0.0
         cb_avg_us = (self._profile_cb_us_total / self._profile_cb_calls) if self._profile_cb_calls else 0.0
+        cb_hz = (self._profile_cb_calls / dt_s) if dt_s > 0 else 0.0
+        cb_dt_avg_us = (
+            (self._profile_cb_dt_us_total / self._profile_cb_dt_us_count) if self._profile_cb_dt_us_count else 0.0
+        )
         cb_frames_avg = (
             (self._profile_cb_frames_total / self._profile_cb_calls) if self._profile_cb_calls else 0.0
         )
+
+        expected_cb_hz = (float(self.sample_rate) / float(self.buffer_size)) if self.buffer_size > 0 else 0.0
 
         print(
             "[SoundDeviceSpeakerProfile]"
@@ -463,9 +547,11 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
             f" sr={self.sample_rate}"
             f" ch={self.channel_count}"
             f" block={self.buffer_size}"
+            f" hz(write/cb/exp)={write_hz:.2f}/{cb_hz:.2f}/{expected_cb_hz:.2f}"
             f" write(avgUs/maxUs)={write_avg_us:.0f}/{self._profile_write_us_max}"
             f" qFull={self._profile_queue_full_events}"
             f" cb(frames min/avg/max)={self._profile_cb_frames_min or 0}/{cb_frames_avg:.1f}/{self._profile_cb_frames_max}"
+            f" cbDt(min/avg/maxUs)={self._profile_cb_dt_us_min or 0}/{cb_dt_avg_us:.0f}/{self._profile_cb_dt_us_max}"
             f" cb(avgUs/maxUs)={cb_avg_us:.0f}/{self._profile_cb_us_max}"
             f" cbQueueEmpty={self._profile_cb_queue_empty}"
             f" qsize(min/max)={self._profile_cb_queue_qsize_min or 0}/{self._profile_cb_queue_qsize_max}"
@@ -491,6 +577,11 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
         self._profile_cb_queue_empty = 0
         self._profile_cb_queue_qsize_min = None
         self._profile_cb_queue_qsize_max = 0
+        self._profile_cb_last_t = None
+        self._profile_cb_dt_us_total = 0
+        self._profile_cb_dt_us_count = 0
+        self._profile_cb_dt_us_min = None
+        self._profile_cb_dt_us_max = 0
 
 
 # Plugin factory function

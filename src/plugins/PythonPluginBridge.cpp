@@ -147,6 +147,7 @@ struct PythonPluginBridge::ProfilingData
         std::cout << std::fixed << std::setprecision(2);
         std::cout << "[PythonBridgeProfile:" << (label.empty() ? "unknown" : label) << "]"
                   << " dt=" << dtMs << "ms"
+                  << " calls(r/w/a)=" << readTotalUs.count << "/" << writeTotalUs.count << "/" << availTotalUs.count
                   << " read(avgUs total/gil/buf/py/copy)="
                   << readTotalUs.avgUs() << "/"
                   << readGILUs.avgUs() << "/"
@@ -167,6 +168,13 @@ struct PythonPluginBridge::ProfilingData
                   << readGILUs.maxUs << "/"
                   << writeGILUs.maxUs << "/"
                   << availGILUs.maxUs
+                  << " maxUs(totalR/pyR/totalW/pyW/totalA/pyA)="
+                  << readTotalUs.maxUs << "/"
+                  << readPyCallUs.maxUs << "/"
+                  << writeTotalUs.maxUs << "/"
+                  << writePyCallUs.maxUs << "/"
+                  << availTotalUs.maxUs << "/"
+                  << availPyCallUs.maxUs
                   << " errors(r/w/a)=" << readErrors << "/" << writeErrors << "/" << availErrors
                   << std::endl;
 
@@ -495,6 +503,9 @@ bool PythonPluginBridge::start() {
 
     if (success) {
         state_ = PluginState::Running;
+        if (profiling_) {
+            profiling_->reset(std::chrono::steady_clock::now());
+        }
     }
 
     // Release GIL

@@ -60,6 +60,9 @@ class SoundCardSpeakerPlugin(AudioSinkPlugin):
         self.device_name: str = ""
 
         self.max_buffer_ms = 200
+        # WASAPI/PulseAudio client buffer (via soundcard's `blocksize`).
+        # Defaulting to a modest value avoids `player.play()` blocking on tiny device periods.
+        self.player_buffer_ms = 50
 
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
@@ -85,11 +88,23 @@ class SoundCardSpeakerPlugin(AudioSinkPlugin):
         self._profile_play_calls = 0
         self._profile_play_us_total = 0
         self._profile_play_us_max = 0
+        self._profile_play_last_t = None
+        self._profile_play_dt_us_total = 0
+        self._profile_play_dt_us_count = 0
+        self._profile_play_dt_us_min = None
+        self._profile_play_dt_us_max = 0
+        self._profile_play_stall_events = 0
+        self._profile_play_resync_events = 0
         self._profile_frames_played = 0
         self._profile_ring_fill_samples = 0
         self._profile_ring_fill_total = 0
         self._profile_ring_fill_min = None
         self._profile_ring_fill_max = 0
+
+        self._active_player_blocksize = None
+        self._active_player_deviceperiod = None
+        self._active_player_buffersize = None
+        self._active_play_frames = None
 
     def initialize(self) -> bool:
         if not SOUNDCARD_AVAILABLE:
@@ -125,6 +140,32 @@ class SoundCardSpeakerPlugin(AudioSinkPlugin):
         self._underrun_frames = 0
         self._device_open_failures = 0
         self._log_underrun_notice = True
+        self._profile_last_log = time.monotonic()
+
+        self._profile_write_calls = 0
+        self._profile_write_us_total = 0
+        self._profile_write_us_max = 0
+        self._profile_frames_written = 0
+        self._profile_play_calls = 0
+        self._profile_play_us_total = 0
+        self._profile_play_us_max = 0
+        self._profile_play_last_t = None
+        self._profile_play_dt_us_total = 0
+        self._profile_play_dt_us_count = 0
+        self._profile_play_dt_us_min = None
+        self._profile_play_dt_us_max = 0
+        self._profile_play_stall_events = 0
+        self._profile_play_resync_events = 0
+        self._profile_frames_played = 0
+        self._profile_ring_fill_samples = 0
+        self._profile_ring_fill_total = 0
+        self._profile_ring_fill_min = None
+        self._profile_ring_fill_max = 0
+
+        self._active_player_blocksize = None
+        self._active_player_deviceperiod = None
+        self._active_player_buffersize = None
+        self._active_play_frames = None
 
         capacity_frames = max(1, int(self.sample_rate * (self.max_buffer_ms / 1000.0)))
         self._ring = AudioRingBuffer(channels=self.channel_count, capacity_frames=capacity_frames)
@@ -206,6 +247,11 @@ class SoundCardSpeakerPlugin(AudioSinkPlugin):
                 self.max_buffer_ms = max(50, int(value))
             except ValueError:
                 pass
+        elif key == "playerBufferMs":
+            try:
+                self.player_buffer_ms = max(0, int(value))
+            except ValueError:
+                pass
 
     def get_parameter(self, key: str) -> str:
         if key == "sampleRate":
@@ -216,6 +262,8 @@ class SoundCardSpeakerPlugin(AudioSinkPlugin):
             return str(self.buffer_size)
         if key == "maxBufferMs":
             return str(self.max_buffer_ms)
+        if key == "playerBufferMs":
+            return str(self.player_buffer_ms)
         if key == "deviceName":
             return self.device_name or ""
         if key == "deviceQuery":
@@ -312,13 +360,19 @@ class SoundCardSpeakerPlugin(AudioSinkPlugin):
             else 0.0
         )
 
-        expected_play_us = int(max(1.0, (self.buffer_size / max(1, self.sample_rate)) * 1_000_000.0))
+        play_frames = int(self._active_play_frames or self.buffer_size)
+        expected_play_us = int(max(1.0, (play_frames / max(1, self.sample_rate)) * 1_000_000.0))
 
         ring_stats = self._ring.get_stats() if self._ring else None
         ring_capacity = self._ring.get_capacity_frames() if self._ring else 0
 
         write_avg_us = (self._profile_write_us_total / self._profile_write_calls) if self._profile_write_calls else 0.0
         play_avg_us = (self._profile_play_us_total / self._profile_play_calls) if self._profile_play_calls else 0.0
+        play_hz = (self._profile_play_calls / dt_s) if dt_s > 0 else 0.0
+        play_dt_avg_us = (
+            (self._profile_play_dt_us_total / self._profile_play_dt_us_count) if self._profile_play_dt_us_count else 0.0
+        )
+        expected_play_hz = (float(self.sample_rate) / float(play_frames)) if play_frames > 0 else 0.0
 
         print(
             "[SoundCardSpeakerProfile]"
@@ -326,9 +380,17 @@ class SoundCardSpeakerPlugin(AudioSinkPlugin):
             f" sr={self.sample_rate}"
             f" ch={self.channel_count}"
             f" buf={self.buffer_size}"
+            f" playerBufMs={self.player_buffer_ms}"
+            f" playerBlock={self._active_player_blocksize or 0}"
+            f" playFrames={play_frames}"
+            f" devPeriod={self._active_player_deviceperiod or ''}"
+            f" devBuf={self._active_player_buffersize or ''}"
             f" ringFill(min/avg/max)={self._profile_ring_fill_min or 0}/{ring_fill_avg:.1f}/{self._profile_ring_fill_max}"
             f" ringCap={ring_capacity}"
+            f" hz(play/exp)={play_hz:.2f}/{expected_play_hz:.2f}"
+            f" playDt(min/avg/maxUs)={self._profile_play_dt_us_min or 0}/{play_dt_avg_us:.0f}/{self._profile_play_dt_us_max}"
             f" play(avgUs/maxUs/expectedUs)={play_avg_us:.0f}/{self._profile_play_us_max}/{expected_play_us}"
+            f" playDiag(stall/resync)={self._profile_play_stall_events}/{self._profile_play_resync_events}"
             f" write(avgUs/maxUs)={write_avg_us:.0f}/{self._profile_write_us_max}"
             f" frames(written/played)={self._profile_frames_written}/{self._profile_frames_played}"
             f" underruns(events/frames)={self._underrun_events}/{self._underrun_frames}"
@@ -345,6 +407,13 @@ class SoundCardSpeakerPlugin(AudioSinkPlugin):
         self._profile_play_calls = 0
         self._profile_play_us_total = 0
         self._profile_play_us_max = 0
+        self._profile_play_last_t = None
+        self._profile_play_dt_us_total = 0
+        self._profile_play_dt_us_count = 0
+        self._profile_play_dt_us_min = None
+        self._profile_play_dt_us_max = 0
+        self._profile_play_stall_events = 0
+        self._profile_play_resync_events = 0
         self._profile_frames_played = 0
         self._profile_ring_fill_samples = 0
         self._profile_ring_fill_total = 0
@@ -376,12 +445,32 @@ class SoundCardSpeakerPlugin(AudioSinkPlugin):
             spk = self._select_speaker()
             self.device_name = self._device_display_name(spk)
 
+            player_blocksize = None
+            if self.player_buffer_ms > 0:
+                player_blocksize = max(
+                    int(self.buffer_size),
+                    int(self.sample_rate * (self.player_buffer_ms / 1000.0)),
+                )
+
             player_cm = None
             open_error = None
             try:
-                player_cm = spk.player(samplerate=self.sample_rate, channels=self.channel_count)
+                if player_blocksize is not None:
+                    player_cm = spk.player(
+                        samplerate=self.sample_rate,
+                        channels=self.channel_count,
+                        blocksize=player_blocksize,
+                    )
+                else:
+                    player_cm = spk.player(samplerate=self.sample_rate, channels=self.channel_count)
             except TypeError:
-                player_cm = spk.player(samplerate=self.sample_rate)
+                try:
+                    if player_blocksize is not None:
+                        player_cm = spk.player(samplerate=self.sample_rate, blocksize=player_blocksize)
+                    else:
+                        player_cm = spk.player(samplerate=self.sample_rate)
+                except TypeError:
+                    player_cm = spk.player(samplerate=self.sample_rate)
             except Exception as e:
                 open_error = e
 
@@ -391,24 +480,64 @@ class SoundCardSpeakerPlugin(AudioSinkPlugin):
                     if self._ring:
                         capacity_frames = max(1, int(self.sample_rate * (self.max_buffer_ms / 1000.0)))
                         self._ring.reset(channels=1, capacity_frames=capacity_frames)
-                    player_cm = spk.player(samplerate=self.sample_rate, channels=1)
+                    if player_blocksize is not None:
+                        player_cm = spk.player(samplerate=self.sample_rate, channels=1, blocksize=player_blocksize)
+                    else:
+                        player_cm = spk.player(samplerate=self.sample_rate, channels=1)
                 except TypeError:
-                    player_cm = spk.player(samplerate=self.sample_rate)
+                    try:
+                        if player_blocksize is not None:
+                            player_cm = spk.player(samplerate=self.sample_rate, blocksize=player_blocksize)
+                        else:
+                            player_cm = spk.player(samplerate=self.sample_rate)
+                    except TypeError:
+                        player_cm = spk.player(samplerate=self.sample_rate)
                 except Exception as e:
                     if open_error is not None:
                         raise RuntimeError(f"{open_error}; fallback failed: {e}") from e
                     raise
 
             with player_cm as player:
+                self._active_player_blocksize = player_blocksize
+                self._active_player_deviceperiod = (
+                    getattr(player, "deviceperiod", None)
+                    or getattr(player, "device_period", None)
+                    or getattr(player, "_device_period", None)
+                )
+                self._active_player_buffersize = (
+                    getattr(player, "buffersize", None)
+                    or getattr(player, "buffer_size", None)
+                    or getattr(player, "_buffer_size", None)
+                )
+                play_frames = int(player_blocksize or self.buffer_size)
+                play_frames = max(int(self.buffer_size), play_frames)
+                self._active_play_frames = play_frames
                 self._ready_event.set()
 
                 play_ch = int(self.channel_count)
-                out = np.zeros((play_ch, self.buffer_size), dtype=np.float32)
-                silence = np.zeros((self.buffer_size, play_ch), dtype=np.float32)
+                out_channels_frames = np.zeros((play_ch, play_frames), dtype=np.float32)
+                out_frames_channels = np.zeros((play_frames, play_ch), dtype=np.float32)
+                silence = out_frames_channels
+
+                block_s = float(play_frames) / float(max(1, self.sample_rate))
+                next_play_t = time.monotonic()
 
                 while not self._stop_event.is_set():
+                    now_t = time.monotonic()
+                    sleep_s = next_play_t - now_t
+                    if sleep_s > 0:
+                        if self._stop_event.wait(timeout=sleep_s):
+                            break
+                    else:
+                        # If we fell far behind (e.g. device stall), resync to avoid bursty catch-up.
+                        if (-sleep_s) > 0.25:
+                            next_play_t = now_t
+                            if self._profile_enabled:
+                                self._profile_play_resync_events += 1
+
                     if not self._ring:
                         player.play(silence)
+                        next_play_t += block_s
                         continue
 
                     if self._profile_enabled:
@@ -424,25 +553,41 @@ class SoundCardSpeakerPlugin(AudioSinkPlugin):
                         except Exception:
                             pass
 
-                    out.fill(0)
-                    filled = self._ring.read_into(out)
-                    if filled < self.buffer_size:
-                        self._track_underrun(self.buffer_size - filled)
+                    out_channels_frames.fill(0)
+                    filled = self._ring.read_into(out_channels_frames)
+                    if filled < play_frames:
+                        self._track_underrun(play_frames - filled)
                     if self._profile_enabled:
                         self._profile_frames_played += int(filled)
 
-                    # soundcard expects (frames, channels)
-                    frames_channels = out.T
-                    if not frames_channels.flags["C_CONTIGUOUS"]:
-                        frames_channels = np.ascontiguousarray(frames_channels)
+                    # soundcard expects (frames, channels) contiguous
+                    out_frames_channels[:, :] = out_channels_frames.T
                     play_start = time.perf_counter() if self._profile_enabled else 0.0
-                    player.play(frames_channels)
+                    player.play(out_frames_channels)
                     if self._profile_enabled:
+                        if self._profile_play_last_t is not None:
+                            dt_us = int((play_start - self._profile_play_last_t) * 1_000_000.0)
+                            self._profile_play_dt_us_total += dt_us
+                            self._profile_play_dt_us_count += 1
+                            if self._profile_play_dt_us_min is None:
+                                self._profile_play_dt_us_min = dt_us
+                            else:
+                                self._profile_play_dt_us_min = min(self._profile_play_dt_us_min, dt_us)
+                            self._profile_play_dt_us_max = max(self._profile_play_dt_us_max, dt_us)
+                        self._profile_play_last_t = play_start
+
                         play_us = int((time.perf_counter() - play_start) * 1_000_000.0)
+                        expected_play_us = int(
+                            max(1.0, (play_frames / max(1, self.sample_rate)) * 1_000_000.0)
+                        )
+                        if play_us > (expected_play_us * 3):
+                            self._profile_play_stall_events += 1
                         self._profile_play_calls += 1
                         self._profile_play_us_total += play_us
                         self._profile_play_us_max = max(self._profile_play_us_max, play_us)
                         self._maybe_log_profile()
+
+                    next_play_t += block_s
         except Exception as e:
             self._device_open_failures += 1
             self._thread_error = str(e)
@@ -453,7 +598,9 @@ class SoundCardSpeakerPlugin(AudioSinkPlugin):
         out_ch = int(self.channel_count)
 
         if in_ch == out_ch:
-            return in_channels_frames.astype(np.float32, copy=True)
+            if in_channels_frames.dtype == np.float32:
+                return in_channels_frames
+            return in_channels_frames.astype(np.float32, copy=False)
 
         if out_ch == 1:
             mono = in_channels_frames.mean(axis=0, dtype=np.float32)
