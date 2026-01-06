@@ -11,6 +11,7 @@ NDA (Nade Desktop Application) is a **real-time audio encryption bridge** that s
 - ✅ Dual independent pipelines (TX + RX simultaneously)
 - ✅ Automatic sample rate conversion (works with any device)
 - ✅ Python processor plugins (equal to C++)
+  - *Note: Performance optimization implemented, production validation pending*
 - ✅ 35% code reduction (bearer/crypto removed from core)
 - ✅ Production-ready stability (<50ms latency, <30% CPU)
 
@@ -294,54 +295,82 @@ BUILD_DIR=build-debug BUILD_TYPE=Debug RUN_AFTER_BUILD=0 ./scripts/dev_ubuntu.sh
 5. Deploy:
    - `scripts\deploy_windows.bat` or `python scripts\deploy.py` packages the binary and plugins; afterwards run `windeployqt` from `readytoship\bin` to copy Qt DLLs and drop in Python/OpenSSL runtimes as noted in the deploy script output.
 
-## Project Structure
+## Project Structure (v2.0)
 
 ```
 NDA/
 ├── CMakeLists.txt               # Main CMake build configuration
 ├── README.md                    # This file
-├── NDA-SPECS.md                 # Detailed specifications
 ├── .gitignore
 │
 ├── src/                         # Source files
 │   ├── main.cpp                 # Application entry point
 │   │
 │   ├── ui/                      # Qt UI components
-│   │   ├── MainWindow.cpp
-│   │   ├── Dashboard.cpp        # Stream control & audio meters
+│   │   ├── MainWindow.cpp       # Main window & dual pipeline orchestration
+│   │   ├── UnifiedPipelineView.cpp  # TX/RX pipeline config & metrics
+│   │   ├── PluginSidebar.cpp    # Plugin parameter configuration
 │   │   ├── AudioDevicesView.cpp # Audio device management
 │   │   ├── EncryptionView.cpp   # Encryption settings
-│   │   ├── PluginsView.cpp      # Plugin management
 │   │   └── SettingsView.cpp     # Application settings
 │   │
-│   ├── audio/                   # Audio engine
-│   │   ├── AudioEngine.cpp      # Main audio processing
-│   │   ├── AudioDevice.cpp      # WASAPI/ASIO device handling
-│   │   └── AudioBuffer.cpp      # Audio buffer management
+│   ├── core/                    # Core processing
+│   │   └── ProcessingPipeline.cpp  # 3-slot pipeline (Source→Processor→Sink)
 │   │
-│   ├── crypto/                  # Encryption engine
-│   │   ├── Encryptor.cpp        # AES-256-GCM encryption
-│   │   └── KeyExchange.cpp      # ECDH key exchange
+│   ├── audio/                   # Audio infrastructure
+│   │   ├── AudioEngine.cpp      # Audio engine orchestration
+│   │   ├── AudioBuffer.cpp      # Multi-channel buffer management
+│   │   └── Resampler.cpp        # Sample rate conversion (v2.0)
 │   │
 │   └── plugins/                 # Plugin system
-│       ├── PluginInterface.cpp  # Plugin base interface
-│       └── PluginManager.cpp    # Plugin loader/manager
+│       ├── PluginManager.cpp    # Plugin loading/lifecycle
+│       └── PythonPluginBridge.cpp  # Python plugin support
 │
 ├── include/                     # Public headers
 │   ├── ui/                      # UI headers
+│   ├── core/                    # Core processing headers
 │   ├── audio/                   # Audio headers
-│   ├── crypto/                  # Crypto headers
-│   └── plugins/                 # Plugin headers
+│   └── plugins/                 # Plugin interfaces
+│       ├── AudioSourcePlugin.h
+│       ├── AudioSinkPlugin.h
+│       ├── AudioProcessorPlugin.h  # v2.0: Unified processor interface
+│       └── PluginTypes.h
 │
-├── resources/                   # Application resources
-│   ├── icons/
-│   ├── images/
-│   └── styles/
+├── plugins_src/                 # C++ plugin implementations
+│   ├── SineWaveSourcePlugin.cpp
+│   ├── WavFileSinkPlugin.cpp
+│   ├── NullSinkPlugin.cpp
+│   ├── AIOCSourcePlugin.cpp
+│   ├── AIOCSinkPlugin.cpp
+│   └── examples/                # Example processors
+│       ├── AES256EncryptorPlugin.cpp
+│       └── AES256DecryptorPlugin.cpp
 │
-├── cmake/                       # CMake modules
-├── tests/                       # Unit tests
+├── plugins_py/                  # Python plugin implementations
+│   ├── base_plugin.py           # Python plugin base classes
+│   ├── sine_wave_source.py
+│   ├── sounddevice_microphone.py
+│   ├── sounddevice_speaker.py
+│   ├── null_sink.py
+│   ├── wav_file_sink.py
+│   └── examples/                # Example processors
+│       ├── passthrough.py
+│       ├── simple_gain.py
+│       ├── fernet_encryptor.py
+│       └── fernet_decryptor.py
+│
+├── tests/                       # Testing
+│   ├── test_resampler_quality.cpp
+│   └── benchmark_python_bridge.cpp
+│
 └── docs/                        # Documentation
+    ├── NDA-SPECS-v2.md          # v2.0 specifications
+    ├── PLUGIN_DEVELOPMENT_v2.md # Plugin authoring guide
+    ├── MIGRATION_GUIDE.md       # v1.x → v2.0 migration
+    └── README_V2.md             # v2.0 documentation index
 ```
+
+**Note:** Crypto functionality removed from core in v2.0 - encryption now handled via processor plugins.
 
 ## Architecture
 

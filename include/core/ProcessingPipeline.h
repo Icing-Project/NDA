@@ -55,6 +55,13 @@ public:
     double getRealTimeRatio() const;
 
 private:
+    enum class BackpressureMode
+    {
+        WaitAndRetry,
+        Drop,
+        WriteRetry
+    };
+
     void processingThread();
     void processAudioFrame();
 
@@ -81,6 +88,15 @@ private:
     uint64_t backpressureWaits_;
     uint64_t consecutiveFailures_;
     uint64_t processorFailures_;
+
+    BackpressureMode backpressureMode_;
+    int backpressureSleepMs_;
+    int driftResyncMs_;
+    int winTimePeriodMs_;
+    bool winTimePeriodActive_;
+    int longFrameWarnMs_;
+    int longFrameLogIntervalMs_;
+    std::chrono::steady_clock::time_point lastLongFrameLog_;
 
     std::atomic<float> peakLeft_;
     std::atomic<float> peakRight_;
