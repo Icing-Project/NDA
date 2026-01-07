@@ -36,7 +36,8 @@ class PulseAudioMicrophonePlugin(AudioSourcePlugin):
         self.stream = None
 
         # Ring buffer for audio data (stores up to 2 seconds of audio)
-        self.ring_buffer = deque(maxlen=200)  # ~200 chunks = 2 seconds
+        max_chunks = int((2.0 * self.sample_rate) / self.buffer_size)
+        self.ring_buffer = deque(maxlen=max_chunks)
         self.buffer_lock = threading.Lock()
         self.underrun_count = 0
 
@@ -163,7 +164,21 @@ class PulseAudioMicrophonePlugin(AudioSourcePlugin):
 
     def set_parameter(self, key: str, value: str):
         """Set plugin parameter"""
-        pass
+        if key == "bufferSize":
+            try:
+                self.set_buffer_size(int(value))
+            except ValueError:
+                pass
+        elif key == "sampleRate":
+            try:
+                self.set_sample_rate(int(value))
+            except ValueError:
+                pass
+        elif key == "channels":
+            try:
+                self.set_channel_count(int(value))
+            except ValueError:
+                pass
 
     def get_parameter(self, key: str) -> str:
         """Get plugin parameter"""
@@ -171,6 +186,10 @@ class PulseAudioMicrophonePlugin(AudioSourcePlugin):
             return str(self.sample_rate)
         elif key == "channels":
             return str(self.channel_count)
+        elif key == "bufferSize":
+            return str(self.buffer_size)
+        elif key == "underruns":
+            return str(self.underrun_count)
         return ""
 
     def set_audio_callback(self, callback: AudioSourceCallback):
@@ -241,7 +260,19 @@ class PulseAudioMicrophonePlugin(AudioSourcePlugin):
     def set_channel_count(self, channels: int):
         """Set number of channels"""
         if self.state in (PluginState.UNLOADED, PluginState.INITIALIZED):
-            self.channel_count = channels
+            self.channel_count = max(1, channels)
+
+    def get_buffer_size(self) -> int:
+        """Get buffer size in frames"""
+        return self.buffer_size
+
+    def set_buffer_size(self, samples: int):
+        """Set buffer size"""
+        if self.state in (PluginState.UNLOADED, PluginState.INITIALIZED):
+            self.buffer_size = max(64, samples)
+            # Update ring buffer size to hold ~2 seconds
+            max_chunks = int((2.0 * self.sample_rate) / self.buffer_size)
+            self.ring_buffer = deque(maxlen=max_chunks)
 
 
 # Plugin factory function

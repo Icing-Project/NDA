@@ -43,7 +43,7 @@ class PulseAudioSpeakerPlugin(AudioSinkPlugin):
             return False
 
         if not PYAUDIO_AVAILABLE:
-            print("[PulseAudioSpeaker] PyAudio not available. Install with: pip install pyaudio")
+            print("[PulseAudioSpeaker] PyAudio not available. Install with: pip install pyaudio", flush=True)
             self.state = PluginState.ERROR
             return False
 
@@ -118,7 +118,7 @@ class PulseAudioSpeakerPlugin(AudioSinkPlugin):
         """Get plugin information"""
         return PluginInfo(
             name="PulseAudio Speaker Output",
-            version="1.0.0",
+            version="2.0.0",
             author="Icing Project",
             description="Plays audio through system speakers using PulseAudio",
             plugin_type=PluginType.AUDIO_SINK,
@@ -127,7 +127,21 @@ class PulseAudioSpeakerPlugin(AudioSinkPlugin):
 
     def set_parameter(self, key: str, value: str):
         """Set plugin parameter"""
-        pass
+        if key == "bufferSize":
+            try:
+                self.set_buffer_size(int(value))
+            except ValueError:
+                pass
+        elif key == "sampleRate":
+            try:
+                self.set_sample_rate(int(value))
+            except ValueError:
+                pass
+        elif key == "channels":
+            try:
+                self.set_channel_count(int(value))
+            except ValueError:
+                pass
 
     def get_parameter(self, key: str) -> str:
         """Get plugin parameter"""
@@ -176,7 +190,7 @@ class PulseAudioSpeakerPlugin(AudioSinkPlugin):
     def set_channel_count(self, channels: int):
         """Set number of channels"""
         if self.state in (PluginState.UNLOADED, PluginState.INITIALIZED):
-            self.channel_count = channels
+            self.channel_count = max(1, channels)
 
     def get_buffer_size(self) -> int:
         """Get buffer size"""
@@ -185,7 +199,7 @@ class PulseAudioSpeakerPlugin(AudioSinkPlugin):
     def set_buffer_size(self, samples: int):
         """Set buffer size"""
         if self.state in (PluginState.UNLOADED, PluginState.INITIALIZED):
-            self.buffer_size = samples
+            self.buffer_size = max(64, samples)
 
     def get_available_space(self) -> int:
         """Get available space"""
