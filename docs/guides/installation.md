@@ -37,16 +37,50 @@ brew install cmake qt@6 openssl python@3.11 portaudio
 
 ## Quick Build (Windows)
 
+### Fresh Installation (First Time Setup)
+
+If this is your first time building NDA, run the setup script to install all dependencies:
+
+```batch
+# From repository root
+scripts\setup_windows.bat
+```
+
+This will:
+- Check for all required dependencies
+- Guide you through installing missing components
+- Provide direct download links
+- Install Python packages automatically
+
+**Then proceed to build using one of the options below.**
+
 ### Option 1: Use Build Script (Recommended)
 
-```bash
+```batch
 # From repository root
 scripts\build_windows.bat
 
 # Built executable: build\Release\NDA.exe
 ```
 
-### Option 2: Manual CMake
+The build script will automatically:
+- Detect Qt installation (checks 6.5.3, 6.6.3, 6.7.0)
+- Detect OpenSSL location
+- Verify all prerequisites
+- Build application and plugins
+
+### Option 2: Fast Build with Ninja (Recommended for Developers)
+
+```batch
+# Requires Ninja build system
+scripts\build_windows_ninja.bat
+
+# Built executable: build\NDA.exe
+```
+
+Ninja provides faster incremental builds for development.
+
+### Option 3: Manual CMake
 
 ```bash
 # Configure
