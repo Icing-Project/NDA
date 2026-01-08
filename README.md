@@ -2,6 +2,9 @@
 
 Professional Audio Processing Framework - **C++17 + Qt6**
 
+> **🚀 Quick Start for Windows Users:**
+> New to NDA? See **[QUICKSTART_WINDOWS.md](QUICKSTART_WINDOWS.md)** for a step-by-step setup guide!
+
 ## Overview
 
 NDA (Nade Desktop Application) is a **real-time audio encryption bridge** that sits transparently between audio devices, providing encryption/decryption for secure communication. Built with C++17 and Qt6, NDA features a clean 3-slot plugin architecture, dual independent pipelines for full-duplex operation, and automatic sample rate adaptation for universal device compatibility.
@@ -45,6 +48,11 @@ NDA (Nade Desktop Application) is a **real-time audio encryption bridge** that s
 - **Encryption**: OpenSSL 3.x (AES-256-GCM)
 
 ## Quick Start (v2.0)
+
+> **📖 Detailed Setup Guide:**
+> For step-by-step installation instructions, see:
+> - **Windows:** [QUICKSTART_WINDOWS.md](QUICKSTART_WINDOWS.md)
+> - **Linux:** See "Development Environment (Ubuntu)" section below
 
 ### Core Concept
 
@@ -268,32 +276,84 @@ You can tune behaviour with environment variables:
 BUILD_DIR=build-debug BUILD_TYPE=Debug RUN_AFTER_BUILD=0 ./scripts/dev_ubuntu.sh
 ```
 
-## Development Environment (Windows, MSVC/Ninja)
+## Development Environment (Windows)
 
-1. Install prerequisites:
-   - Visual Studio Build Tools 2022 with the C++ workload and Windows 10 SDK (10.0.18362+)
-   - Qt 6.6.3 MSVC toolchain at `C:\Qt\6.6.3\msvc2019_64`
-   - OpenSSL Win64 at `C:\Program Files\OpenSSL-Win64`
-   - Ninja available on `PATH`
-2. Build (from the VS 2022 Developer Command Prompt):
-   - Run `scripts\build_windows_ninja.bat` **or**
-   - Manual commands:
-     ```bat
-     cmake -S . -B build -G "Ninja" ^
-       -DCMAKE_PREFIX_PATH="C:/Qt/6.6.3/msvc2019_64" ^
-       -DOPENSSL_ROOT_DIR="C:/Program Files/OpenSSL-Win64" ^
-       -DCMAKE_BUILD_TYPE=Release
-     cmake --build build --config Release
-     ```
-3. Outputs:
-   - App: `build\NDA.exe`
-   - C++ plugins: `build\plugins\AIOCSourcePlugin.dll`, `AIOCSinkPlugin.dll`, `SineWaveSourcePlugin.dll`, `NullSinkPlugin.dll`, `WavFileSinkPlugin.dll`
-4. Run:
-   - Add Qt to `PATH`: `set PATH=C:\Qt\6.6.3\msvc2019_64\bin;%PATH%`
-   - Launch `build\NDA.exe`
-   - In the UI, choose **Load Plugins from Directory** and select `build\plugins` to load the AIOC source/sink (and sample) plugins.
-5. Deploy:
-   - `scripts\deploy_windows.bat` or `python scripts\deploy.py` packages the binary and plugins; afterwards run `windeployqt` from `readytoship\bin` to copy Qt DLLs and drop in Python/OpenSSL runtimes as noted in the deploy script output.
+### Quick Start for Fresh Users
+
+1. **Clone the repository**
+   ```bash
+   git clone <repository-url>
+   cd NDA
+   ```
+
+2. **Install dependencies** (first time only)
+   ```batch
+   scripts\setup_windows.bat
+   ```
+   This interactive script will:
+   - Check for all required dependencies
+   - Guide you through installing missing components
+   - Provide direct download links for:
+     - Visual Studio Build Tools 2022 (with C++ workload and Windows 10 SDK)
+     - Qt 6.6.3+ MSVC toolchain
+     - OpenSSL Win64
+     - Python 3.8+ (with development headers)
+   - Automatically install Python packages (numpy, sounddevice, etc.)
+
+3. **Build the project**
+   ```batch
+   REM Standard build (Visual Studio generator)
+   scripts\build_windows.bat
+
+   REM OR faster builds (Ninja generator, requires Ninja)
+   scripts\build_windows_ninja.bat
+   ```
+
+   Build scripts automatically:
+   - Detect Qt installation (checks 6.5.3, 6.6.3, 6.7.0)
+   - Detect OpenSSL location
+   - Verify prerequisites
+   - Build app and plugins
+
+4. **Outputs:**
+   - App: `build\Release\NDA.exe` (VS generator) or `build\NDA.exe` (Ninja)
+   - C++ plugins: `build\plugins\*.dll`
+     - `AIOCSourcePlugin.dll` - Windows AIOC USB audio input
+     - `AIOCSinkPlugin.dll` - Windows AIOC USB audio output
+     - `SineWaveSourcePlugin.dll` - Test signal generator
+     - `NullSinkPlugin.dll` - Silent output (testing)
+     - `WavFileSinkPlugin.dll` - WAV file recorder
+
+5. **Run the application**
+   ```batch
+   REM From repository root
+   build\Release\NDA.exe
+   ```
+   - Qt DLLs are found via auto-detection
+   - In the UI, click **Auto-Load Python Plugins** or **Load Plugins from Directory** and select `build\plugins`
+
+6. **Deploy for distribution** (optional)
+   ```batch
+   scripts\deploy_windows.bat
+   ```
+   Creates a standalone package in `readytoship\` with all dependencies
+
+### Manual Build (Advanced)
+
+If you prefer manual CMake configuration:
+
+```batch
+REM Configure
+cmake -S . -B build -G "Ninja" ^
+  -DCMAKE_PREFIX_PATH="C:/Qt/6.6.3/msvc2019_64" ^
+  -DOPENSSL_ROOT_DIR="C:/Program Files/OpenSSL-Win64" ^
+  -DCMAKE_BUILD_TYPE=Release
+
+REM Build
+cmake --build build --config Release
+```
+
+See `scripts\README.md` for more build options and troubleshooting.
 
 ## Project Structure (v2.0)
 

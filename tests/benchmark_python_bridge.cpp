@@ -24,27 +24,27 @@ BenchmarkResult benchmarkPlugin(const std::string& pluginPath,
                                const std::string& pluginType,
                                int iterations = 1000) {
     auto plugin = std::make_shared<PythonPluginBridge>();
-    
+
     if (!plugin->loadPlugin(pluginPath, pluginDir)) {
         std::cerr << "Failed to load plugin: " << pluginPath << std::endl;
         return {0, 0, 0, 0, 0};
     }
-    
+
     if (!plugin->initialize()) {
         std::cerr << "Failed to initialize plugin: " << pluginPath << std::endl;
         return {0, 0, 0, 0, 0};
     }
-    
+
     if (!plugin->start()) {
         std::cerr << "Failed to start plugin: " << pluginPath << std::endl;
         plugin->shutdown();
         return {0, 0, 0, 0, 0};
     }
-    
+
     AudioBuffer buffer(2, 512);  // 2 channels, 512 frames (standard)
     std::vector<double> timings;
     timings.reserve(iterations);
-    
+
     // Warmup: 100 iterations
     for (int i = 0; i < 100; ++i) {
         if (pluginType == "source") {
@@ -55,11 +55,11 @@ BenchmarkResult benchmarkPlugin(const std::string& pluginPath,
             plugin->writeAudio(buffer);
         }
     }
-    
+
     // Actual benchmark
     for (int i = 0; i < iterations; ++i) {
         auto start = high_resolution_clock::now();
-        
+
         if (pluginType == "source") {
             plugin->readAudio(buffer);
         } else if (pluginType == "processor") {
@@ -67,36 +67,36 @@ BenchmarkResult benchmarkPlugin(const std::string& pluginPath,
         } else if (pluginType == "sink") {
             plugin->writeAudio(buffer);
         }
-        
+
         auto end = high_resolution_clock::now();
         auto duration = duration_cast<microseconds>(end - start);
         timings.push_back(static_cast<double>(duration.count()));
     }
-    
+
     plugin->stop();
     plugin->shutdown();
-    
+
     // Calculate statistics
     BenchmarkResult result;
-    
+
     double sum = 0.0;
     for (double t : timings) {
         sum += t;
     }
     result.mean_us = sum / timings.size();
-    
+
     std::sort(timings.begin(), timings.end());
     result.median_us = timings[timings.size() / 2];
     result.min_us = timings.front();
     result.max_us = timings.back();
-    
+
     // Standard deviation
     double variance = 0.0;
     for (double t : timings) {
         variance += (t - result.mean_us) * (t - result.mean_us);
     }
     result.stddev_us = std::sqrt(variance / timings.size());
-    
+
     return result;
 }
 
@@ -109,11 +109,11 @@ void printResult(const std::string& testName, const BenchmarkResult& result, dou
     std::cout << "  Max:    " << result.max_us << " µs\n";
     std::cout << "  StdDev: " << result.stddev_us << " µs\n";
     std::cout << "  Target: " << target_us << " µs\n";
-    
+
     if (result.mean_us < target_us) {
         std::cout << "  Status: ✓ PASS (target achieved)\n";
     } else {
-        std::cout << "  Status: ✗ FAIL (target missed by " 
+        std::cout << "  Status: ✗ FAIL (target missed by "
                   << (result.mean_us - target_us) << " µs)\n";
     }
 }
@@ -136,11 +136,11 @@ int main(int argc, char** argv) {
     std::string pluginType = "source";
     int iterations = 1000;
     double target = 500.0;
-    
+
     // Parse command line arguments
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
-        
+
         if (arg == "--help") {
             printUsage(argv[0]);
             return 0;
@@ -160,35 +160,35 @@ int main(int argc, char** argv) {
             return 1;
         }
     }
-    
+
     std::cout << "=== Python Bridge Performance Benchmark ===\n";
     std::cout << "Plugin: " << pluginPath << "\n";
     std::cout << "Type: " << pluginType << "\n";
     std::cout << "Buffer: 2 channels, 512 frames\n";
     std::cout << "Iterations: " << iterations << " (+ 100 warmup)\n";
     std::cout << "Target: <" << target << " µs\n";
-    
+
     auto result = benchmarkPlugin(pluginPath, pluginDir, pluginType, iterations);
-    
+
     if (result.mean_us == 0.0) {
         std::cerr << "Benchmark failed (plugin error)\n";
         return 1;
     }
-    
+
     printResult("Benchmark Results", result, target);
-    
+
     std::cout << "\n=== Summary ===\n";
     if (result.mean_us < target) {
         std::cout << "Overall: ✓ PASS\n";
-        
+
         // Show improvement vs baseline (if better than baseline)
         double baseline = 3000.0;  // Conservative baseline estimate
         if (result.mean_us < baseline) {
             double improvement = baseline / result.mean_us;
-            std::cout << "Improvement vs baseline: " << std::fixed << std::setprecision(1) 
+            std::cout << "Improvement vs baseline: " << std::fixed << std::setprecision(1)
                      << improvement << "x faster\n";
         }
-        
+
         return 0;
     } else {
         std::cout << "Overall: ✗ FAIL\n";
