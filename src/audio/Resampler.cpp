@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <cstdlib>
 
 #ifdef HAVE_LIBSAMPLERATE
 #include <samplerate.h>
@@ -14,7 +15,8 @@ Resampler::Resampler()
     : inputRate_(0)
     , outputRate_(0)
     , channels_(0)
-    , quality_(ResampleQuality::Simple)
+    , quality_(ResampleQuality::Medium)  // v2.1: Default to Medium for better fidelity
+    , cachedRatio_(0.0)
 #ifdef HAVE_LIBSAMPLERATE
     , srcState_(nullptr)
 #endif
@@ -36,15 +38,41 @@ void Resampler::initialize(int inputRate, int outputRate, int channels,
     outputRate_ = outputRate;
     channels_ = channels;
     quality_ = quality;
-    
+
+    // v2.1: Check for environment variable override
+    if (const char* qualityEnv = std::getenv("NDA_RESAMPLER_QUALITY")) {
+        std::string s(qualityEnv);
+        std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+
+        if (s == "simple" || s == "linear") {
+            quality_ = ResampleQuality::Simple;
+        } else if (s == "medium" || s == "cubic") {
+            quality_ = ResampleQuality::Medium;
+        } else if (s == "high" || s == "best") {
+            quality_ = ResampleQuality::High;
+        } else {
+            std::cerr << "[Resampler] Unknown NDA_RESAMPLER_QUALITY='" << qualityEnv
+                      << "' (expected simple|medium|high); using default" << std::endl;
+        }
+    }
+
+    // v2.1: Cache the resampling ratio for performance
+    if (inputRate_ != 0 && outputRate_ != 0) {
+        cachedRatio_ = static_cast<double>(outputRate_) / static_cast<double>(inputRate_);
+    } else {
+        cachedRatio_ = 1.0;
+    }
+
     if (!isActive()) {
         std::cout << "[Resampler] Passthrough mode (rates match: " << inputRate << "Hz)" << std::endl;
         return;
     }
-    
+
     std::cout << "[Resampler] Initializing " << inputRate << "Hz → " << outputRate << "Hz ("
               << channels << " channels, quality: ";
-    
+
     switch (quality_) {
         case ResampleQuality::Simple:
             std::cout << "Simple)";
@@ -57,7 +85,7 @@ void Resampler::initialize(int inputRate, int outputRate, int channels,
             break;
     }
     std::cout << std::endl;
-    
+
     // Initialize continuity buffer (for smooth transitions between buffers)
     lastSamples_.resize(channels_, 0.0f);
     
@@ -100,7 +128,8 @@ void Resampler::process(AudioBuffer& buffer) {
 
 void Resampler::processSimple(AudioBuffer& buffer) {
     // Linear interpolation resampling
-    const float ratio = static_cast<float>(outputRate_) / inputRate_;
+    // v2.1: Use cached ratio for performance
+    const float ratio = static_cast<float>(cachedRatio_);
     const int inputFrames = buffer.getFrameCount();
     const int outputFrames = static_cast<int>(std::ceil(inputFrames * ratio));
     
@@ -138,7 +167,8 @@ void Resampler::processSimple(AudioBuffer& buffer) {
 
 void Resampler::processMedium(AudioBuffer& buffer) {
     // Cubic interpolation (Catmull-Rom spline) for better quality
-    const float ratio = static_cast<float>(outputRate_) / inputRate_;
+    // v2.1: Use cached ratio for performance
+    const float ratio = static_cast<float>(cachedRatio_);
     const int inputFrames = buffer.getFrameCount();
     const int outputFrames = static_cast<int>(std::ceil(inputFrames * ratio));
     
@@ -185,7 +215,8 @@ void Resampler::processHigh(AudioBuffer& buffer) {
     }
     
     const int inputFrames = buffer.getFrameCount();
-    const double ratio = static_cast<double>(outputRate_) / inputRate_;
+    // v2.1: Use cached ratio for performance
+    const double ratio = cachedRatio_;
     const int outputFrames = static_cast<int>(std::ceil(inputFrames * ratio));
     
     AudioBuffer outputBuffer(buffer.getChannelCount(), outputFrames);

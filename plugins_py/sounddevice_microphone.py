@@ -25,7 +25,7 @@ class SoundDeviceMicrophonePlugin(AudioSourcePlugin):
         super().__init__()
         self.sample_rate = 48000
         self.channel_count = 1
-        self.buffer_size = 256
+        self.buffer_size = 512  # v2.1: Fixed to 512 to match pipeline buffer size
         self.device = None
         self.device_name = ""
         self.callback = None
@@ -180,8 +180,20 @@ class SoundDeviceMicrophonePlugin(AudioSourcePlugin):
                     raise
 
             self.stream.start()
+
+            # v2.1: Pre-fill queue with 2 blocks to prevent initial underruns
+            # This adds ~21ms startup latency but ensures smooth audio from first frame
+            import time
+            prefill_timeout = 1.0  # Max 1 second to fill
+            prefill_start = time.time()
+            while self.audio_queue.qsize() < 2:
+                if time.time() - prefill_start > prefill_timeout:
+                    print("[SoundDeviceMic] Warning: Queue pre-fill timeout, proceeding anyway", flush=True)
+                    break
+                time.sleep(0.005)  # Sleep 5ms between checks
+
             self.state = PluginState.RUNNING
-            print(f"[SoundDeviceMic] Started - {self.sample_rate}Hz, {self.channel_count} channels, block {self.buffer_size}, device '{self.device_name or self.device}'", flush=True)
+            print(f"[SoundDeviceMic] Started - {self.sample_rate}Hz, {self.channel_count} channels, block {self.buffer_size}, device '{self.device_name or self.device}' (queue pre-filled: {self.audio_queue.qsize()} blocks)", flush=True)
             return True
         except Exception as e:
             print(f"[SoundDeviceMic] Failed to start: {e}", flush=True)
@@ -276,7 +288,9 @@ class SoundDeviceMicrophonePlugin(AudioSourcePlugin):
         self._maybe_bump_latency()
 
         try:
-            indata = self.audio_queue.get(timeout=0.2)  # allow time for real-time pacing
+            # v2.1: Reduced timeout from 200ms to 50ms to match latency budget
+            # With pre-filled queue, this should rarely timeout
+            indata = self.audio_queue.get(timeout=0.05)
 
             frame_count = buffer.get_frame_count()
 

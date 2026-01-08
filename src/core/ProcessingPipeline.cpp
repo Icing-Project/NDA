@@ -863,25 +863,16 @@ void ProcessingPipeline::processingThread()
                 }
             }
 
-            // Optional drift resync: when we're very far behind, consider the gap "dropped"
-            // to avoid bursting output and causing sink queue overflows.
-            if (driftResyncMs_ > 0 && drift.count() > driftResyncMs_) {
-                const auto elapsedUs = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
-                    now - startTime_
-                ).count());
-                const uint64_t requiredSamples = (elapsedUs * static_cast<uint64_t>(targetSampleRate_)) / 1000000ULL;
-                if (requiredSamples > attemptedSamples) {
-                    const uint64_t catchUpSamples = requiredSamples - attemptedSamples;
-                    droppedSamples_ += catchUpSamples;
-                    attemptedSamples = requiredSamples;
-                    driftResyncEvents++;
-                    if (driftResyncEvents == 1 || driftResyncEvents % 100 == 0) {
-                        const double catchUpMs = (static_cast<double>(catchUpSamples) / targetSampleRate_) * 1000.0;
-                        std::cerr << "[Pipeline] Drift resync: dropped ~" << catchUpMs
-                                  << "ms of audio (" << catchUpSamples << " samples)" << std::endl;
-                    }
-                }
-            }
+            // v2.1: DISABLED drift resync - it drops audio which violates zero-loss requirement
+            // Previously this would artificially increment droppedSamples_ to "catch up" when behind schedule.
+            // This caused audible artifacts (clicks, pops, crackling).
+            // New strategy: Let pipeline run as fast as it can. If it falls behind, that's a plugin performance
+            // issue that should be fixed, not hidden by dropping audio.
+
+            // Original code (DISABLED):
+            // if (driftResyncMs_ > 0 && drift.count() > driftResyncMs_) {
+            //     droppedSamples_ += catchUpSamples;  // This was dropping audio!
+            // }
         }
 
         // Log progress every second
@@ -910,6 +901,28 @@ void ProcessingPipeline::processingThread()
     }
 
     std::cout << "[Pipeline] Processing thread exiting" << std::endl;
+}
+
+// v2.1: Safe plugin call wrapper with exception handling
+// Prevents plugin crashes from taking down the entire pipeline
+template<typename Func>
+bool safePluginCall(const char* pluginName, const char* operation, Func&& func, std::atomic<bool>& isRunning)
+{
+    try {
+        return func();
+    } catch (const std::exception& e) {
+        std::cerr << "[Pipeline] CRITICAL: Plugin '" << pluginName << "' threw exception during "
+                  << operation << ": " << e.what() << std::endl;
+        std::cerr << "[Pipeline] Failing pipeline to prevent corruption." << std::endl;
+        isRunning.store(false);
+        return false;
+    } catch (...) {
+        std::cerr << "[Pipeline] CRITICAL: Plugin '" << pluginName << "' crashed during "
+                  << operation << " (unknown exception)" << std::endl;
+        std::cerr << "[Pipeline] Failing pipeline to prevent corruption." << std::endl;
+        isRunning.store(false);
+        return false;
+    }
 }
 
 void ProcessingPipeline::processAudioFrame()
@@ -963,8 +976,11 @@ void ProcessingPipeline::processAudioFrame()
                   << std::endl;
     };
 
-    // 1. Read audio from source
-    if (!source_->readAudio(workBuffer_)) {
+    // 1. Read audio from source (with exception safety)
+    bool readOk = safePluginCall(source_->getInfo().name.c_str(), "readAudio",
+                                   [&]() { return source_->readAudio(workBuffer_); }, isRunning_);
+
+    if (!readOk) {
         consecutiveFailures_++;
         readUs = toMicros(std::chrono::steady_clock::now() - readStart);
         if (profiling_) {
@@ -979,6 +995,11 @@ void ProcessingPipeline::processAudioFrame()
 
         if (consecutiveFailures_ > 10 && consecutiveFailures_ % 100 == 0) {
             std::cerr << "[Pipeline] " << consecutiveFailures_ << " consecutive read failures" << std::endl;
+        }
+
+        // Check if pipeline was stopped due to exception
+        if (!isRunning_) {
+            return;  // Exit immediately on critical failure
         }
 
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -1008,17 +1029,24 @@ void ProcessingPipeline::processAudioFrame()
     // 3. Apply processor at 48kHz (optional - encryptor, decryptor, effects, etc.)
     if (processor_ && processor_->getState() == PluginState::Running) {
         auto t0 = std::chrono::steady_clock::now();
-        if (!processor_->processAudio(workBuffer_)) {
-            // Processor failed - log but continue with passthrough
-            processorFailures_++;
-            if (processorFailures_ == 1 || processorFailures_ % 100 == 0) {
-                std::cerr << "[Pipeline] Processor failed (" << processorFailures_ 
-                         << " total failures), passing through unprocessed audio" << std::endl;
-            }
-        }
+
+        // v2.1: Safe plugin call with fail-fast on critical failure
+        bool processOk = safePluginCall(processor_->getInfo().name.c_str(), "processAudio",
+                                         [&]() { return processor_->processAudio(workBuffer_); }, isRunning_);
+
         processorUs = toMicros(std::chrono::steady_clock::now() - t0);
         if (profiling_) {
             profiling_->processorUs.add(processorUs);
+        }
+
+        if (!processOk) {
+            // v2.1: FAIL-FAST on processor failure
+            // Reason: Passthrough could send unencrypted/unprocessed audio, violating security
+            processorFailures_++;
+            std::cerr << "[Pipeline] CRITICAL: Processor failed after " << processorFailures_
+                      << " failures. Stopping pipeline to prevent unprocessed audio transmission." << std::endl;
+            isRunning_.store(false);
+            return;
         }
     }
 
@@ -1057,13 +1085,25 @@ void ProcessingPipeline::processAudioFrame()
 
     const int frameCount = workBuffer_.getFrameCount();
 
-    // 5/6. Backpressure + write
+    // 5/6. Backpressure + write (ZERO-LOSS MODE)
+    // v2.1: Never drop audio - wait for sink with latency budget enforcement
     bool writeOk = false;
+    const int maxLatencyMs = 50;  // Fail-fast if we exceed latency budget
+    auto backpressureStart = std::chrono::steady_clock::now();
+    int retryAttempts = 0;
+    const int maxRetries = 20;  // At 5ms sleep, this is ~100ms total
 
-    if (backpressureMode_ == BackpressureMode::WaitAndRetry ||
-        backpressureMode_ == BackpressureMode::Drop) {
+    while (!writeOk && retryAttempts < maxRetries) {
+        // Check available space (with exception safety)
         auto availStart = std::chrono::steady_clock::now();
-        int available = sink_->getAvailableSpace();
+        int available = 0;
+        bool availOk = safePluginCall(sink_->getInfo().name.c_str(), "getAvailableSpace",
+                                       [&]() { available = sink_->getAvailableSpace(); return true; }, isRunning_);
+        if (!availOk) {
+            // Critical failure in getAvailableSpace
+            return;
+        }
+
         lastAvailableFrames = available;
         const uint64_t availUs1 = toMicros(std::chrono::steady_clock::now() - availStart);
         sinkAvailUs += availUs1;
@@ -1075,113 +1115,86 @@ void ProcessingPipeline::processAudioFrame()
             profiling_->availableMax = std::max(profiling_->availableMax, available);
         }
 
-        if (available < frameCount) {
-            backpressureWaits_++;
-            if (profiling_) profiling_->backpressureHits++;
-
-            if (backpressureMode_ == BackpressureMode::WaitAndRetry && backpressureSleepMs_ > 0) {
-                auto sleepStart = std::chrono::steady_clock::now();
-                std::this_thread::sleep_for(std::chrono::milliseconds(backpressureSleepMs_));
-                const uint64_t sleepUs = toMicros(std::chrono::steady_clock::now() - sleepStart);
-                backpressureSleepUs += sleepUs;
-                if (profiling_) {
-                    profiling_->backpressureSleepUs.add(sleepUs);
-                }
-
-                // Retry once
-                availStart = std::chrono::steady_clock::now();
-                available = sink_->getAvailableSpace();
-                lastAvailableFrames = available;
-                const uint64_t availUs2 = toMicros(std::chrono::steady_clock::now() - availStart);
-                sinkAvailUs += availUs2;
-                if (profiling_) {
-                    profiling_->sinkAvailUs.add(availUs2);
-                    profiling_->availableSamples++;
-                    profiling_->availableTotal += static_cast<uint64_t>(std::max(0, available));
-                    profiling_->availableMin = std::min(profiling_->availableMin, available);
-                    profiling_->availableMax = std::max(profiling_->availableMax, available);
-                }
-            }
-
-            if (available < frameCount) {
-                droppedSamples_ += frameCount;
-                if (profiling_) {
-                    profiling_->backpressureDrops++;
-                    profiling_->frameUs.add(toMicros(std::chrono::steady_clock::now() - frameStart));
-                }
-                if (droppedSamples_ <= 100) {
-                    std::cerr << "[Pipeline] Buffer dropped (sink backpressure)" << std::endl;
-                }
-                maybeLogLongFrame("bp_drop");
-                return;
-            }
-        }
-
+        // Try to write (with exception safety)
         auto writeStart = std::chrono::steady_clock::now();
-        writeOk = sink_->writeAudio(workBuffer_);
-        sinkWriteUs = toMicros(std::chrono::steady_clock::now() - writeStart);
+        writeOk = safePluginCall(sink_->getInfo().name.c_str(), "writeAudio",
+                                  [&]() { return sink_->writeAudio(workBuffer_); }, isRunning_);
+        sinkWriteUs += toMicros(std::chrono::steady_clock::now() - writeStart);
         if (profiling_) {
-            profiling_->sinkWriteUs.add(sinkWriteUs);
+            profiling_->sinkWriteUs.add(toMicros(std::chrono::steady_clock::now() - writeStart));
         }
-    } else {
-        auto writeStart = std::chrono::steady_clock::now();
-        writeOk = sink_->writeAudio(workBuffer_);
-        sinkWriteUs = toMicros(std::chrono::steady_clock::now() - writeStart);
-        if (profiling_) {
-            profiling_->sinkWriteUs.add(sinkWriteUs);
+
+        // Check if pipeline was stopped due to exception
+        if (!isRunning_) {
+            return;  // Exit immediately on critical failure
         }
-        if (!writeOk) {
-            backpressureWaits_++;
-            if (profiling_) profiling_->backpressureHits++;
 
-            if (backpressureSleepMs_ > 0) {
-                auto sleepStart = std::chrono::steady_clock::now();
-                std::this_thread::sleep_for(std::chrono::milliseconds(backpressureSleepMs_));
-                const uint64_t sleepUs = toMicros(std::chrono::steady_clock::now() - sleepStart);
-                backpressureSleepUs += sleepUs;
-                if (profiling_) {
-                    profiling_->backpressureSleepUs.add(sleepUs);
-                }
-            }
+        if (writeOk) {
+            break;  // Success!
+        }
 
-            const auto retryStart = std::chrono::steady_clock::now();
-            const bool retryOk = sink_->writeAudio(workBuffer_);
-            const uint64_t retryUs = toMicros(std::chrono::steady_clock::now() - retryStart);
-            sinkWriteUs += retryUs;
+        // Write failed - check if we've exceeded latency budget
+        auto cumulativeWaitMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - backpressureStart
+        ).count();
+
+        if (cumulativeWaitMs >= maxLatencyMs) {
+            // FAIL-FAST: We've exceeded our latency budget
+            std::cerr << "[Pipeline] CRITICAL: Sink cannot keep up - exceeded " << maxLatencyMs
+                      << "ms latency budget after " << retryAttempts << " retries. "
+                      << "Failing pipeline to prevent audio corruption." << std::endl;
+            isRunning_.store(false);  // Stop pipeline
             if (profiling_) {
-                profiling_->sinkWriteUs.add(retryUs);
-            }
-            writeOk = retryOk;
-        }
-
-        if (!writeOk) {
-            droppedSamples_ += frameCount;
-            if (profiling_) {
-                profiling_->backpressureDrops++;
-                profiling_->sinkWriteFailures++;
                 profiling_->frameUs.add(toMicros(std::chrono::steady_clock::now() - frameStart));
             }
-            if (droppedSamples_ <= 100) {
-                std::cerr << "[Pipeline] Buffer dropped (sink write failed)" << std::endl;
-            }
-            maybeLogLongFrame("write_fail");
+            maybeLogLongFrame("latency_budget_exceeded");
             return;
         }
+
+        // Backpressure detected - wait and retry
+        backpressureWaits_++;
+        if (profiling_) profiling_->backpressureHits++;
+
+        if (retryAttempts == 0) {
+            std::cerr << "[Pipeline] Sink backpressure detected, waiting (available: "
+                      << available << ", needed: " << frameCount << ")" << std::endl;
+        }
+
+        // Sleep before retry
+        if (backpressureSleepMs_ > 0) {
+            auto sleepStart = std::chrono::steady_clock::now();
+            std::this_thread::sleep_for(std::chrono::milliseconds(backpressureSleepMs_));
+            const uint64_t sleepUs = toMicros(std::chrono::steady_clock::now() - sleepStart);
+            backpressureSleepUs += sleepUs;
+            if (profiling_) {
+                profiling_->backpressureSleepUs.add(sleepUs);
+            }
+        }
+
+        retryAttempts++;
     }
 
-    if (writeOk) {
-        processedSamples_ += frameCount;
-    } else {
-        droppedSamples_ += frameCount;
-        std::cerr << "[Pipeline] Sink write failed" << std::endl;
-        if (profiling_) profiling_->sinkWriteFailures++;
+    // If we exhausted retries without success, fail pipeline
+    if (!writeOk) {
+        std::cerr << "[Pipeline] CRITICAL: Sink write failed after " << maxRetries
+                  << " retries. Failing pipeline." << std::endl;
+        isRunning_.store(false);
+        if (profiling_) {
+            profiling_->sinkWriteFailures++;
+            profiling_->frameUs.add(toMicros(std::chrono::steady_clock::now() - frameStart));
+        }
+        maybeLogLongFrame("write_exhausted");
+        return;
     }
+
+    // Success - update metrics
+    processedSamples_ += frameCount;
 
     if (profiling_) {
         profiling_->frameUs.add(toMicros(std::chrono::steady_clock::now() - frameStart));
     }
 
-    maybeLogLongFrame(writeOk ? "ok" : "write_false");
+    maybeLogLongFrame("ok");
 }
 
 } // namespace nda

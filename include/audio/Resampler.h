@@ -32,16 +32,19 @@ public:
     
     /**
      * @brief Initialize resampler
-     * 
+     *
      * Auto-fix mode: if rates mismatch, auto-enable resampling.
-     * 
+     *
      * @param inputRate Source sample rate in Hz
      * @param outputRate Target sample rate in Hz
      * @param channels Number of channels
-     * @param quality Resampling quality (default: Simple)
+     * @param quality Resampling quality (default: Medium for better audio fidelity)
+     *
+     * @note v2.1: Default changed from Simple to Medium to eliminate resampling artifacts.
+     *       Can be overridden via NDA_RESAMPLER_QUALITY environment variable (simple|medium|high).
      */
     void initialize(int inputRate, int outputRate, int channels,
-                   ResampleQuality quality = ResampleQuality::Simple);
+                   ResampleQuality quality = ResampleQuality::Medium);
     
     /**
      * @brief Process buffer (resample in-place or to new buffer)
@@ -68,10 +71,13 @@ private:
     int outputRate_;
     int channels_;
     ResampleQuality quality_;
-    
+
     // For continuity between buffers (avoid clicks/pops at buffer boundaries)
     std::vector<float> lastSamples_;
-    
+
+    // v2.1: Cached ratio for performance (avoid repeated division)
+    double cachedRatio_;
+
     // Quality mode implementations
     void processSimple(AudioBuffer& buffer);   // Linear interpolation
     void processMedium(AudioBuffer& buffer);   // Cubic (Catmull-Rom)
