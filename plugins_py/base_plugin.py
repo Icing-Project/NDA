@@ -1,5 +1,27 @@
 """
 NDA Plugin Base Classes for Python
+
+IMPORTANT BUFFER SIZE REQUIREMENT (v2.1):
+==========================================
+All audio source plugins MUST use 512-sample buffers to match the pipeline's
+internal buffer size. This ensures:
+- Zero-copy performance in the Python bridge
+- Elimination of buffer size mismatches that cause queue starvation
+- Consistent latency across all plugins
+
+When implementing AudioSourcePlugin:
+1. Set self.buffer_size = 512 in __init__()
+2. Configure your audio library to use 512-sample blocks
+3. If your library produces different sizes, rebuffer to 512 samples
+
+When implementing AudioSinkPlugin:
+1. Accept any buffer size the pipeline provides (typically 512)
+2. Internally rebuffer if your audio library requires different sizes
+
+For optimal performance:
+- Pre-fill your queue with 2-3 blocks before returning True from start()
+- Use reasonable timeouts (50ms recommended, not 200ms+)
+- Handle queue.Empty gracefully by returning False, not blocking indefinitely
 """
 
 from abc import ABC, abstractmethod

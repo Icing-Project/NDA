@@ -28,7 +28,7 @@ class SoundDeviceSpeakerPlugin(AudioSinkPlugin):
         super().__init__()
         self.sample_rate = 48000
         self.channel_count = 1
-        self.buffer_size = 256
+        self.buffer_size = 512  # v2.1: Fixed to 512 to match pipeline buffer size
         self.device = None
         self.device_name = ""
         self.stream = None
