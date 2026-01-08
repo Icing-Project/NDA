@@ -8,33 +8,33 @@ Welcome to the NDA v2.0 documentation! This index guides you through all specifi
 
 | Document | Purpose | Audience |
 |----------|---------|----------|
-| **V2_DECISIONS_LOCKED.md** | Final approved decisions | Everyone |
-| **NDA-SPECS-v2.md** | Complete technical spec | Developers |
-| **V2_IMPLEMENTATION_PLAN.md** | Step-by-step roadmap | Developers |
-| **V2_STRATEGIC_SUMMARY.md** | Strategic rationale | Leadership/PM |
-| **PYTHON_PROCESSOR_GUIDE.md** | Python plugin development | Plugin authors |
+| **[V2 Decisions](../strategy/v2-decisions-locked.md)** | Final approved decisions | Everyone |
+| **[Technical Specs](../technical/specifications.md)** | Complete technical spec | Developers |
+| **[Implementation Plan](../strategy/implementation-plan.md)** | Step-by-step roadmap | Developers |
+| **[Strategic Summary](../strategy/v2-strategic-summary.md)** | Strategic rationale | Leadership/PM |
+| **[Python Processor Guide](../development/python-processor-guide.md)** | Python plugin development | Plugin authors |
 
 ---
 
 ## 🎯 Start Here
 
 ### If you want to understand the vision:
-→ **Read: V2_DECISIONS_LOCKED.md** (5 min read)
+→ **Read: [V2 Decisions](../strategy/v2-decisions-locked.md)** (5 min read)
 
 ### If you're implementing v2.0:
-→ **Read: V2_IMPLEMENTATION_PLAN.md** (detailed roadmap)
+→ **Read: [Implementation Plan](../strategy/implementation-plan.md)** (detailed roadmap)
 
 ### If you're writing Python plugins:
-→ **Read: PYTHON_PROCESSOR_GUIDE.md** (comprehensive guide)
+→ **Read: [Python Processor Guide](../development/python-processor-guide.md)** (comprehensive guide)
 
 ### If you need the full technical spec:
-→ **Read: NDA-SPECS-v2.md** (complete specification)
+→ **Read: [Technical Specifications](../technical/specifications.md)** (complete specification)
 
 ---
 
 ## 📚 Document Summaries
 
-### 1. V2_DECISIONS_LOCKED.md ✅
+### 1. [V2 Decisions Locked](../strategy/v2-decisions-locked.md) ✅
 
 **Status:** APPROVED — Ready for implementation  
 **Length:** ~500 lines  
@@ -58,7 +58,7 @@ Welcome to the NDA v2.0 documentation! This index guides you through all specifi
 
 ---
 
-### 2. NDA-SPECS-v2.md 📖
+### 2. [Technical Specifications](../technical/specifications.md) 📖
 
 **Length:** ~960 lines  
 **Comprehensive technical specification**
@@ -85,7 +85,7 @@ Welcome to the NDA v2.0 documentation! This index guides you through all specifi
 
 ---
 
-### 3. V2_IMPLEMENTATION_PLAN.md 🛠️
+### 3. [Implementation Plan](../strategy/implementation-plan.md) 🛠️
 
 **Length:** ~1100 lines  
 **Tactical step-by-step implementation guide**
@@ -112,7 +112,7 @@ Welcome to the NDA v2.0 documentation! This index guides you through all specifi
 
 ---
 
-### 4. V2_STRATEGIC_SUMMARY.md 📊
+### 4. [Strategic Summary](../strategy/v2-strategic-summary.md) 📊
 
 **Length:** ~450 lines  
 **Executive decision record**
@@ -132,7 +132,7 @@ Welcome to the NDA v2.0 documentation! This index guides you through all specifi
 
 ---
 
-### 5. PYTHON_PROCESSOR_GUIDE.md 🐍
+### 5. [Python Processor Guide](../development/python-processor-guide.md) 🐍
 
 **Length:** ~550 lines  
 **Comprehensive Python plugin development guide**
@@ -287,37 +287,37 @@ Week 4: Polish
 ## 📖 Reading Order
 
 ### For Developers (Full Implementation):
-1. V2_DECISIONS_LOCKED.md (understand decisions)
-2. NDA-SPECS-v2.md (complete spec)
-3. V2_IMPLEMENTATION_PLAN.md (follow step-by-step)
-4. PYTHON_PROCESSOR_GUIDE.md (if writing Python plugins)
+1. [V2 Decisions Locked](../strategy/v2-decisions-locked.md) (understand decisions)
+2. [Technical Specifications](../technical/specifications.md) (complete spec)
+3. [Implementation Plan](../strategy/implementation-plan.md) (follow step-by-step)
+4. [Python Processor Guide](../development/python-processor-guide.md) (if writing Python plugins)
 
 ### For Plugin Authors:
-1. PYTHON_PROCESSOR_GUIDE.md (primary guide)
-2. NDA-SPECS-v2.md § Plugin Architecture
+1. [Python Processor Guide](../development/python-processor-guide.md) (primary guide)
+2. [Technical Specifications](../technical/specifications.md) § Plugin Architecture
 3. plugins_py/examples/ (reference implementations)
 
 ### For Leadership/PM:
-1. V2_DECISIONS_LOCKED.md (approved decisions)
-2. V2_STRATEGIC_SUMMARY.md (rationale)
-3. NDA-SPECS-v2.md § Executive Summary
+1. [V2 Decisions Locked](../strategy/v2-decisions-locked.md) (approved decisions)
+2. [Strategic Summary](../strategy/v2-strategic-summary.md) (rationale)
+3. [Technical Specifications](../technical/specifications.md) § Executive Summary
 
 ### For Code Review:
-1. V2_IMPLEMENTATION_PLAN.md (checklist per phase)
-2. V2_DECISIONS_LOCKED.md (validate against approved decisions)
+1. [Implementation Plan](../strategy/implementation-plan.md) (checklist per phase)
+2. [V2 Decisions Locked](../strategy/v2-decisions-locked.md) (validate against approved decisions)
 
 ---
 
 ## 🔗 Related Documents
 
 ### Legacy v1.x Documentation
-- `NDA-SPECS.md` — Original v1.x specification (superseded)
-- `audio_pipeline_audit.md` — Detailed v1.x performance audit
-- `ARCHITECTURE_REPORT.md` — v1.x architecture report
+- [`legacy/v1-specs.md`](../legacy/v1-specs.md) — Original v1.x specification (superseded)
+- [`reports/audio_pipeline_audit.md`](../reports/audio_pipeline_audit.md) — Detailed v1.x performance audit
+- [`reports/ARCHITECTURE_REPORT.md`](../reports/ARCHITECTURE_REPORT.md) — v1.x architecture report
 
 ### Build & Deployment
-- `DEPLOYMENT_COMPLETE.md` — Deployment procedures
-- `PLATFORM_PACKAGES_READY.md` — Platform packaging guide
+- [`reports/DEPLOYMENT_COMPLETE.md`](../reports/DEPLOYMENT_COMPLETE.md) — Deployment procedures
+- [`PLATFORM_PACKAGES_READY.md`](../PLATFORM_PACKAGES_READY.md) — Platform packaging guide
 
 ### Plugin Development
 - `plugins_py/QUICKSTART.md` — Python plugin quick start
@@ -328,16 +328,16 @@ Week 4: Polish
 ## 🆘 Support
 
 ### Questions about v2.0 direction?
-→ Read **V2_STRATEGIC_SUMMARY.md** § "Why This Decision"
+→ Read **[Strategic Summary](../strategy/v2-strategic-summary.md)** § "Why This Decision"
 
 ### Stuck during implementation?
-→ Check **V2_IMPLEMENTATION_PLAN.md** for your current phase
+→ Check **[Implementation Plan](../strategy/implementation-plan.md)** for your current phase
 
 ### Python plugin not working?
-→ Debug with **PYTHON_PROCESSOR_GUIDE.md** § "Troubleshooting"
+→ Debug with **[Python Processor Guide](../development/python-processor-guide.md)** § "Troubleshooting"
 
 ### Need full API reference?
-→ Consult **NDA-SPECS-v2.md** § Plugin Interfaces
+→ Consult **[Technical Specifications](../technical/specifications.md)** § Plugin Interfaces
 
 ---
 

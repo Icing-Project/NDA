@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls:*)",
+      "Bash(tree:*)",
+      "Bash(__NEW_LINE__ head -100 /mnt/c/Users/Steph/Desktop/Icing/Dev/NDA/AGENTS.md)",
+      "Bash(__NEW_LINE__ wc -l /mnt/c/Users/Steph/Desktop/Icing/Dev/NDA/AGENTS.md)",
+      "Bash(__NEW_LINE__ cat /mnt/c/Users/Steph/Desktop/Icing/Dev/NDA/AGENTS.md)",
+      "Bash(wc:*)",
+      "Bash(xargs:*)"
+    ]
+  }
+}
