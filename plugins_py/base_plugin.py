@@ -61,7 +61,9 @@ class PluginInfo:
 class AudioBuffer:
     """Audio buffer wrapper for multi-channel audio data"""
     def __init__(self, channels: int, frame_count: int):
-        self.data = np.zeros((channels, frame_count), dtype=np.float32)
+        # OPTIMIZATION: Use np.empty() instead of np.zeros() - the C++ bridge
+        # always fills the buffer via memcpy before Python sees it
+        self.data = np.empty((channels, frame_count), dtype=np.float32)
 
     def get_channel_data(self, channel: int) -> np.ndarray:
         """Get data for specific channel"""

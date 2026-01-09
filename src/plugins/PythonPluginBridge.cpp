@@ -463,10 +463,11 @@ void PythonPluginBridge::destroyCache() {
     Py_XDECREF(cachedReadAudioMethod_);
     
     // Clean up buffer cache
+    Py_XDECREF((PyObject*)cachedNumpyArray_);  // Release NumPy array reference
     Py_XDECREF(cachedBufferInstance_);
     Py_XDECREF(cachedAudioBufferClass_);
     Py_XDECREF(cachedBasePluginModule_);
-    
+
     // Null out pointers
     cachedProcessAudioMethod_ = nullptr;
     cachedWriteAudioMethod_ = nullptr;
@@ -475,6 +476,7 @@ void PythonPluginBridge::destroyCache() {
     cachedAudioBufferClass_ = nullptr;
     cachedBasePluginModule_ = nullptr;
     cachedNumpyArray_ = nullptr;
+    cachedDataPtr_ = nullptr;  // v2.1: Clear cached data pointer
     
     // Reset dimension tracking
     cachedChannels_ = 0;
@@ -647,14 +649,17 @@ bool PythonPluginBridge::readAudio(AudioBuffer& buffer) {
         return false;
     }
 
-    const auto totalStart = std::chrono::steady_clock::now();
+    // v2.1 OPTIMIZATION: Only read clocks when profiling is enabled
+    std::chrono::steady_clock::time_point totalStart, afterGIL, bufferStart, pyCallStart;
+    if (profiling_) {
+        totalStart = std::chrono::steady_clock::now();
+    }
 
     // OPTIMIZATION: Batch GIL operations (acquire ONCE per frame)
-    const auto gilStart = totalStart;
     PyGILState_STATE gstate = PyGILState_Ensure();
-    const auto afterGIL = std::chrono::steady_clock::now();
     if (profiling_) {
-        profiling_->readGILUs.add(toMicros(afterGIL - gilStart));
+        afterGIL = std::chrono::steady_clock::now();
+        profiling_->readGILUs.add(toMicros(afterGIL - totalStart));
     }
 
     auto finish = [&](bool ok) {
@@ -668,7 +673,9 @@ bool PythonPluginBridge::readAudio(AudioBuffer& buffer) {
     };
 
     // OPTIMIZATION: Use cached buffer (avoid repeated allocation)
-    const auto bufferStart = std::chrono::steady_clock::now();
+    if (profiling_) {
+        bufferStart = std::chrono::steady_clock::now();
+    }
     PyObject* pBuffer = getOrCreateCachedBuffer(buffer);
     if (!pBuffer) {
         // Fallback to legacy method
@@ -686,7 +693,9 @@ bool PythonPluginBridge::readAudio(AudioBuffer& buffer) {
     }
 
     // OPTIMIZATION: Use cached method object (avoid attribute lookup)
-    const auto pyCallStart = std::chrono::steady_clock::now();
+    if (profiling_) {
+        pyCallStart = std::chrono::steady_clock::now();
+    }
     PyObject* result = nullptr;
     if (cachedReadAudioMethod_) {
         result = PyObject_CallFunctionObjArgs(
@@ -718,7 +727,10 @@ bool PythonPluginBridge::readAudio(AudioBuffer& buffer) {
 
     if (success) {
         // Copy data back from Python buffer to C++ buffer
-        const auto copyStart = std::chrono::steady_clock::now();
+        std::chrono::steady_clock::time_point copyStart;
+        if (profiling_) {
+            copyStart = std::chrono::steady_clock::now();
+        }
         copyFromPythonBuffer(pBuffer, buffer);
         if (profiling_) {
             profiling_->readCopyUs.add(toMicros(std::chrono::steady_clock::now() - copyStart));
@@ -738,14 +750,17 @@ bool PythonPluginBridge::writeAudio(const AudioBuffer& buffer) {
         return false;
     }
 
-    const auto totalStart = std::chrono::steady_clock::now();
+    // v2.1 OPTIMIZATION: Only read clocks when profiling is enabled
+    std::chrono::steady_clock::time_point totalStart, afterGIL, bufferStart, pyCallStart;
+    if (profiling_) {
+        totalStart = std::chrono::steady_clock::now();
+    }
 
     // OPTIMIZATION: Batch GIL operations (acquire ONCE per frame)
-    const auto gilStart = totalStart;
     PyGILState_STATE gstate = PyGILState_Ensure();
-    const auto afterGIL = std::chrono::steady_clock::now();
     if (profiling_) {
-        profiling_->writeGILUs.add(toMicros(afterGIL - gilStart));
+        afterGIL = std::chrono::steady_clock::now();
+        profiling_->writeGILUs.add(toMicros(afterGIL - totalStart));
     }
 
     auto finish = [&](bool ok) {
@@ -760,7 +775,9 @@ bool PythonPluginBridge::writeAudio(const AudioBuffer& buffer) {
 
     // OPTIMIZATION: Use cached buffer (avoid repeated allocation)
     // Note: Need to cast away const for getOrCreateCachedBuffer
-    const auto bufferStart = std::chrono::steady_clock::now();
+    if (profiling_) {
+        bufferStart = std::chrono::steady_clock::now();
+    }
     PyObject* pBuffer = getOrCreateCachedBuffer(const_cast<AudioBuffer&>(buffer));
     if (!pBuffer) {
         // Fallback to legacy method
@@ -771,7 +788,10 @@ bool PythonPluginBridge::writeAudio(const AudioBuffer& buffer) {
         }
     } else {
         // OPTIMIZATION: Fast memcpy data update (copy TO Python for write)
-        const auto copyStart = std::chrono::steady_clock::now();
+        std::chrono::steady_clock::time_point copyStart;
+        if (profiling_) {
+            copyStart = std::chrono::steady_clock::now();
+        }
         updateCachedBufferData(buffer, pBuffer);
         if (profiling_) {
             profiling_->writeCopyToPyUs.add(toMicros(std::chrono::steady_clock::now() - copyStart));
@@ -782,7 +802,9 @@ bool PythonPluginBridge::writeAudio(const AudioBuffer& buffer) {
     }
 
     // OPTIMIZATION: Use cached method object (avoid attribute lookup)
-    const auto pyCallStart = std::chrono::steady_clock::now();
+    if (profiling_) {
+        pyCallStart = std::chrono::steady_clock::now();
+    }
     PyObject* result = nullptr;
     if (cachedWriteAudioMethod_) {
         result = PyObject_CallFunctionObjArgs(
@@ -917,17 +939,20 @@ void PythonPluginBridge::setBufferSize(int samples) {
 int PythonPluginBridge::getAvailableSpace() const {
     if (!pPluginInstance_) return 512;
 
-    const auto totalStart = std::chrono::steady_clock::now();
-
-    // Acquire GIL for thread-safe Python API calls
-    const auto gilStart = totalStart;
-    PyGILState_STATE gstate = PyGILState_Ensure();
-    const auto afterGIL = std::chrono::steady_clock::now();
+    // v2.1 OPTIMIZATION: Only read clocks when profiling is enabled
+    std::chrono::steady_clock::time_point totalStart, afterGIL, pyCallStart;
     if (profiling_) {
-        profiling_->availGILUs.add(toMicros(afterGIL - gilStart));
+        totalStart = std::chrono::steady_clock::now();
     }
 
-    const auto pyCallStart = std::chrono::steady_clock::now();
+    // Acquire GIL for thread-safe Python API calls
+    PyGILState_STATE gstate = PyGILState_Ensure();
+    if (profiling_) {
+        afterGIL = std::chrono::steady_clock::now();
+        profiling_->availGILUs.add(toMicros(afterGIL - totalStart));
+        pyCallStart = std::chrono::steady_clock::now();
+    }
+
     PyObject* result = PyObject_CallMethod(pPluginInstance_, "get_available_space", nullptr);
     if (profiling_) {
         profiling_->availPyCallUs.add(toMicros(std::chrono::steady_clock::now() - pyCallStart));
@@ -1052,10 +1077,13 @@ PyObject* PythonPluginBridge::getOrCreateCachedBuffer(const AudioBuffer& buffer)
     if (cachedBufferInstance_ &&
         (cachedChannels_ != buffer.getChannelCount() ||
          cachedFrames_ != buffer.getFrameCount())) {
-        // Dimensions changed - release old buffer
+        // Dimensions changed - release old buffer and cached array
+        Py_XDECREF((PyObject*)cachedNumpyArray_);
+        cachedNumpyArray_ = nullptr;
+        cachedDataPtr_ = nullptr;
         Py_DECREF(cachedBufferInstance_);
         cachedBufferInstance_ = nullptr;
-        std::cout << "[PythonBridge] Cache invalidated (size changed: " 
+        std::cout << "[PythonBridge] Cache invalidated (size changed: "
                   << cachedChannels_ << "x" << cachedFrames_ << " → "
                   << buffer.getChannelCount() << "x" << buffer.getFrameCount() << ")" << std::endl;
     }
@@ -1072,8 +1100,21 @@ PyObject* PythonPluginBridge::getOrCreateCachedBuffer(const AudioBuffer& buffer)
             Py_INCREF(cachedBufferInstance_);  // Keep alive
             cachedChannels_ = buffer.getChannelCount();
             cachedFrames_ = buffer.getFrameCount();
-            std::cout << "[PythonBridge] Created cached buffer: " 
-                      << cachedChannels_ << "x" << cachedFrames_ << std::endl;
+
+            // OPTIMIZATION: Cache the NumPy array pointer (avoids per-frame attribute lookup)
+            PyObject* dataAttr = PyObject_GetAttrString(cachedBufferInstance_, "data");
+            if (dataAttr && PyArray_Check(dataAttr)) {
+                cachedNumpyArray_ = reinterpret_cast<PyArrayObject*>(dataAttr);
+                cachedDataPtr_ = static_cast<float*>(PyArray_DATA(cachedNumpyArray_));
+            } else {
+                Py_XDECREF(dataAttr);
+                cachedNumpyArray_ = nullptr;
+                cachedDataPtr_ = nullptr;
+            }
+
+            std::cout << "[PythonBridge] Created cached buffer: "
+                      << cachedChannels_ << "x" << cachedFrames_
+                      << " (dataPtr=" << (cachedDataPtr_ ? "valid" : "null") << ")" << std::endl;
         } else {
             std::cerr << "[PythonBridge] Failed to create cached buffer" << std::endl;
             PyErr_Print();
@@ -1084,29 +1125,37 @@ PyObject* PythonPluginBridge::getOrCreateCachedBuffer(const AudioBuffer& buffer)
 }
 
 // v2.0 Optimization: Update cached buffer data using fast memcpy
+// v2.1 Optimization: Use cached data pointer (no per-frame attribute lookup)
 void PythonPluginBridge::updateCachedBufferData(const AudioBuffer& buffer, PyObject* pyBuffer) {
     if (!pyBuffer) return;
-    
-    // Get pointer to NumPy array inside Python buffer
-    PyObject* dataAttr = PyObject_GetAttrString(pyBuffer, "data");
-    if (!dataAttr || !PyArray_Check(dataAttr)) {
-        std::cerr << "[PythonBridge] Failed to get buffer data attribute" << std::endl;
+
+    float* pyData = nullptr;
+    PyObject* dataAttr = nullptr;
+
+    // OPTIMIZATION: Use cached pointer if available (avoids per-frame PyObject_GetAttrString)
+    if (cachedDataPtr_ && pyBuffer == cachedBufferInstance_) {
+        pyData = cachedDataPtr_;
+    } else {
+        // Fallback: Get pointer to NumPy array inside Python buffer
+        dataAttr = PyObject_GetAttrString(pyBuffer, "data");
+        if (!dataAttr || !PyArray_Check(dataAttr)) {
+            std::cerr << "[PythonBridge] Failed to get buffer data attribute" << std::endl;
+            Py_XDECREF(dataAttr);
+            return;
+        }
+        PyArrayObject* array = reinterpret_cast<PyArrayObject*>(dataAttr);
+        pyData = static_cast<float*>(PyArray_DATA(array));
+    }
+
+    if (!pyData) {
+        std::cerr << "[PythonBridge] NumPy array data pointer is null" << std::endl;
         Py_XDECREF(dataAttr);
         return;
     }
-    
-    PyArrayObject* array = reinterpret_cast<PyArrayObject*>(dataAttr);
-    float* pyData = static_cast<float*>(PyArray_DATA(array));
-    
-    if (!pyData) {
-        std::cerr << "[PythonBridge] NumPy array data pointer is null" << std::endl;
-        Py_DECREF(dataAttr);
-        return;
-    }
-    
+
     const int frames = buffer.getFrameCount();
     const int channels = buffer.getChannelCount();
-    
+
     // OPTIMIZATION: Fast memcpy per channel (NOT element-by-element loop)
     for (int ch = 0; ch < channels; ++ch) {
         const float* cppData = buffer.getChannelData(ch);
@@ -1114,15 +1163,16 @@ void PythonPluginBridge::updateCachedBufferData(const AudioBuffer& buffer, PyObj
             std::cerr << "[PythonBridge] C++ channel data is null" << std::endl;
             continue;
         }
-        
+
         std::memcpy(
             pyData + (ch * frames),
             cppData,
             frames * sizeof(float)
         );
     }
-    
-    Py_DECREF(dataAttr);
+
+    // Only DECREF if we acquired it in this call (not using cached)
+    Py_XDECREF(dataAttr);
 }
 
 PyObject* PythonPluginBridge::createPythonAudioBuffer(const AudioBuffer& buffer) const {
@@ -1179,6 +1229,8 @@ PyObject* PythonPluginBridge::createPythonAudioBuffer(const AudioBuffer& buffer)
         return nullptr;
     }
 
+    // OPTIMIZATION: Fast memcpy per channel (NOT element-by-element loop)
+    const int frames = buffer.getFrameCount();
     for (int ch = 0; ch < buffer.getChannelCount(); ++ch) {
         const float* channelData = buffer.getChannelData(ch);
         if (!channelData) {
@@ -1189,9 +1241,11 @@ PyObject* PythonPluginBridge::createPythonAudioBuffer(const AudioBuffer& buffer)
             Py_DECREF(basePlugin);
             return nullptr;
         }
-        for (int frame = 0; frame < buffer.getFrameCount(); ++frame) {
-            arrayData[ch * buffer.getFrameCount() + frame] = channelData[frame];
-        }
+        std::memcpy(
+            arrayData + (ch * frames),
+            channelData,
+            frames * sizeof(float)
+        );
     }
 
     Py_DECREF(pyData);
@@ -1201,46 +1255,60 @@ PyObject* PythonPluginBridge::createPythonAudioBuffer(const AudioBuffer& buffer)
     return audioBuffer;
 }
 
+// v2.1 Optimization: Use cached data pointer when available
 void PythonPluginBridge::copyFromPythonBuffer(PyObject* pyBuffer, AudioBuffer& buffer) const {
     if (!pyBuffer) {
         std::cerr << "[PythonBridge] Python buffer is null" << std::endl;
         return;
     }
 
-    // Get the data attribute (numpy array)
-    PyObject* pyData = PyObject_GetAttrString(pyBuffer, "data");
-    if (!pyData) {
-        std::cerr << "[PythonBridge] Failed to get data attribute" << std::endl;
-        PyErr_Print();
-        return;
+    float* arrayData = nullptr;
+    PyObject* pyData = nullptr;
+
+    // OPTIMIZATION: Use cached pointer if available (avoids per-frame PyObject_GetAttrString)
+    if (cachedDataPtr_ && pyBuffer == cachedBufferInstance_) {
+        arrayData = cachedDataPtr_;
+    } else {
+        // Fallback: Get the data attribute (numpy array)
+        pyData = PyObject_GetAttrString(pyBuffer, "data");
+        if (!pyData) {
+            std::cerr << "[PythonBridge] Failed to get data attribute" << std::endl;
+            PyErr_Print();
+            return;
+        }
+
+        if (!PyArray_Check(pyData)) {
+            std::cerr << "[PythonBridge] data is not a numpy array" << std::endl;
+            Py_DECREF(pyData);
+            return;
+        }
+
+        arrayData = (float*)PyArray_DATA((PyArrayObject*)pyData);
     }
 
-    if (!PyArray_Check(pyData)) {
-        std::cerr << "[PythonBridge] data is not a numpy array" << std::endl;
-        Py_DECREF(pyData);
-        return;
-    }
-
-    // Copy from numpy array back to C++ buffer
-    float* arrayData = (float*)PyArray_DATA((PyArrayObject*)pyData);
     if (!arrayData) {
         std::cerr << "[PythonBridge] Array data pointer is null" << std::endl;
-        Py_DECREF(pyData);
+        Py_XDECREF(pyData);
         return;
     }
 
+    // OPTIMIZATION: Fast memcpy per channel (NOT element-by-element loop)
+    const int frames = buffer.getFrameCount();
     for (int ch = 0; ch < buffer.getChannelCount(); ++ch) {
         float* channelData = buffer.getChannelData(ch);
         if (!channelData) {
             std::cerr << "[PythonBridge] Channel data is null for channel " << ch << std::endl;
             continue;
         }
-        for (int frame = 0; frame < buffer.getFrameCount(); ++frame) {
-            channelData[frame] = arrayData[ch * buffer.getFrameCount() + frame];
-        }
+        std::memcpy(
+            channelData,
+            arrayData + (ch * frames),
+            frames * sizeof(float)
+        );
     }
 
-    Py_DECREF(pyData);
+    // Only DECREF if we acquired it in this call (not using cached)
+    Py_XDECREF(pyData);
 }
 
 } // namespace nda
