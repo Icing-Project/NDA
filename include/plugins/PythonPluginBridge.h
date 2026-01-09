@@ -119,7 +119,8 @@ private:
     PyObject* cachedAudioBufferClass_;     // AudioBuffer class object
     PyObject* cachedBufferInstance_;       // Reused buffer object (recreated only on size change)
     PyArrayObject* cachedNumpyArray_;      // Reused NumPy array reference
-    
+    float* cachedDataPtr_ = nullptr;       // Direct pointer to NumPy data (avoids per-frame lookup)
+
     // Cached method objects (avoid repeated attribute lookup)
     PyObject* cachedReadAudioMethod_;      // plugin.read_audio method
     PyObject* cachedWriteAudioMethod_;     // plugin.write_audio method
