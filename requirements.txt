@@ -11,3 +11,7 @@ numpy>=1.20.0
 
 # For WAV file operations
 # scipy>=1.7.0  # Optional, for advanced WAV handling
+
+# Cython auto-compilation (optional - falls back to pure Python if not installed)
+# Provides 10-50x speedup for DSP-heavy plugins
+Cython>=3.0.0
