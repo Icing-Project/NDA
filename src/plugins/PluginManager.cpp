@@ -215,6 +215,7 @@ std::vector<std::string> PluginManager::scanPluginDirectory(const std::string& d
                                  filename != "base_plugin.py" &&
                                  filename != "plugin_loader.py" &&
                                  filename != "test_plugins.py" &&
+                                 filename != "cython_compiler.py" &&
                                  filename != "__init__.py" &&
                                  !isSetupFile);
 #endif
@@ -266,33 +267,33 @@ std::shared_ptr<BasePlugin> PluginManager::createNewInstance(const std::string& 
     if (it == plugins_.end()) {
         return nullptr;
     }
-    
+
     const LoadedPlugin& loadedPlugin = it->second;
-    
+
     // For Python plugins, create new instance
     if (loadedPlugin.path.find(".py") != std::string::npos) {
 #ifdef NDA_ENABLE_PYTHON
         std::filesystem::path pluginPath(loadedPlugin.path);
         std::string filename = pluginPath.filename().string();
         std::string directory = pluginPath.parent_path().string();
-        
+
         PythonPluginBridge* bridge = PythonPluginFactory::createPlugin(filename, directory);
         if (!bridge || !bridge->initialize()) {
             if (bridge) delete bridge;
             return nullptr;
         }
-        
+
         return std::shared_ptr<BasePlugin>(bridge);
 #else
         return nullptr;
 #endif
     }
-    
+
     // For C++ plugins, call factory function again
     if (loadedPlugin.libraryHandle) {
         CreatePluginFunc createFunc = nullptr;
         DestroyPluginFunc destroyFunc = nullptr;
-        
+
 #ifdef _WIN32
         createFunc = reinterpret_cast<CreatePluginFunc>(
             GetProcAddress(static_cast<HMODULE>(loadedPlugin.libraryHandle), "createPlugin"));
@@ -304,28 +305,28 @@ std::shared_ptr<BasePlugin> PluginManager::createNewInstance(const std::string& 
         destroyFunc = reinterpret_cast<DestroyPluginFunc>(
             dlsym(loadedPlugin.libraryHandle, "destroyPlugin"));
 #endif
-        
+
         if (!createFunc || !destroyFunc) {
             return nullptr;
         }
-        
+
         BasePlugin* rawInstance = createFunc();
         if (!rawInstance || !validatePlugin(rawInstance)) {
             if (rawInstance) destroyFunc(rawInstance);
             return nullptr;
         }
-        
+
         std::shared_ptr<BasePlugin> instance(rawInstance, [destroyFunc](BasePlugin* p) {
             destroyFunc(p);
         });
-        
+
         if (!instance->initialize()) {
             return nullptr;
         }
-        
+
         return instance;
     }
-    
+
     return nullptr;
 }
 

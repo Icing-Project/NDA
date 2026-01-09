@@ -4,3 +4,7 @@ soundcard>=0.4.2
 
 # Optional (Linux-only): PulseAudio plugins
 # pyaudio>=0.2.11
+
+# Cython auto-compilation (optional - falls back to pure Python if not installed)
+# Provides 10-50x speedup for DSP-heavy plugins
+Cython>=3.0.0
