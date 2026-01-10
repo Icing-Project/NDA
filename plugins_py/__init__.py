@@ -12,7 +12,6 @@ from .base_plugin import (
     PluginState
 )
 
-from .plugin_loader import PluginLoader
 
 __version__ = "1.0.0"
 __all__ = [
@@ -23,5 +22,4 @@ __all__ = [
     "PluginInfo",
     "PluginType",
     "PluginState",
-    "PluginLoader"
 ]
