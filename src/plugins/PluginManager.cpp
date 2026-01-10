@@ -213,7 +213,6 @@ std::vector<std::string> PluginManager::scanPluginDirectory(const std::string& d
                 bool isSetupFile = (filename.size() >= 6 && filename.substr(0, 6) == "setup_");
                 isPythonPlugin = (ext == ".py" &&
                                  filename != "base_plugin.py" &&
-                                 filename != "plugin_loader.py" &&
                                  filename != "test_plugins.py" &&
                                  filename != "cython_compiler.py" &&
                                  filename != "__init__.py" &&
