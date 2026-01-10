@@ -48,8 +48,18 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
-.venv
-packages/readytoship_linux
+.venv/
+
+# Cython generated files
+plugins_py/*.c
+plugins_py/**/*.c
+.cython_cache/
+
+# Legacy packages (removed in V2)
+packages/
+
+# Recording artifacts
+recording_*.wav
 
 # OS files
 .DS_Store
