@@ -40,7 +40,6 @@ public:
           device_(nullptr),
           audioClient_(nullptr),
           renderClient_(nullptr),
-          renderEvent_(nullptr),
 #endif
           comInitialized_(false),
           comOwned_(false)
@@ -128,16 +127,18 @@ public:
         }
 
         // 7. Calculate buffer duration
-        //    100ms = stable for most systems (balance between latency and stability)
+        //    200ms = more stable buffer for polling mode (reduces backpressure)
+        //    In shared mode, larger buffers prevent constant overruns
+        bufferFrames_ = (sampleRate_ * 200) / 1000;  // 200ms at sample rate
         REFERENCE_TIME bufferDuration = (REFERENCE_TIME)((10000000.0 * bufferFrames_) / sampleRate_);
 
-        // 8. Initialize audio client in SHARED mode with EVENT-DRIVEN callback
+        // 8. Initialize audio client in SHARED mode with POLLING (not event-driven)
         //    Shared mode: multiple apps can use device, Windows handles mixing
-        //    Event-driven: more efficient than polling
+        //    No event callback: simpler polling mode, more reliable for our sync API
         hr = audioClient_->Initialize(
             AUDCLNT_SHAREMODE_SHARED,           // Shared mode (not exclusive)
-            AUDCLNT_STREAMFLAGS_EVENTCALLBACK,  // Event-driven (not polling)
-            bufferDuration,                      // Buffer size
+            0,                                   // No special flags - polling mode
+            bufferDuration,                      // Buffer size (200ms)
             0,                                   // Must be 0 in shared mode
             useExtended ? mixFormat : &requestedFormat,
             nullptr                              // No session GUID
@@ -150,14 +151,14 @@ public:
             // Update our config to match device
             sampleRate_ = mixFormat->nSamplesPerSec;
             channels_ = mixFormat->nChannels;
-            bufferFrames_ = (int)((mixFormat->nSamplesPerSec * 100) / 1000);  // 100ms at device rate
+            bufferFrames_ = (int)((mixFormat->nSamplesPerSec * 200) / 1000);  // 200ms at device rate
 
             // Recalculate buffer duration for device rate
             bufferDuration = (REFERENCE_TIME)((10000000.0 * bufferFrames_) / sampleRate_);
 
             hr = audioClient_->Initialize(
                 AUDCLNT_SHAREMODE_SHARED,
-                AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
+                0,  // No event callback
                 bufferDuration,
                 0,
                 mixFormat,
@@ -172,19 +173,16 @@ public:
             return false;
         }
 
-        // 9. Create event for buffer readiness notification
-        renderEvent_ = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-        if (!renderEvent_) {
-            std::cerr << "[WindowsSpeaker] Event creation failed\n";
-            return false;
-        }
-
-        hr = audioClient_->SetEventHandle(renderEvent_);
-        if (FAILED(hr)) {
-            std::cerr << "[WindowsSpeaker] SetEventHandle failed: 0x" << std::hex << hr << std::dec << "\n";
-            CloseHandle(renderEvent_);
-            renderEvent_ = nullptr;
-            return false;
+        // 9. Query the actual allocated buffer size (may differ from request)
+        UINT32 actualBufferFrames = 0;
+        hr = audioClient_->GetBufferSize(&actualBufferFrames);
+        if (SUCCEEDED(hr)) {
+            // CRITICAL: Use the actual allocated size, not our request
+            bufferFrames_ = actualBufferFrames;
+            std::cerr << "[WindowsSpeaker] WASAPI allocated buffer: " << actualBufferFrames
+                      << " frames (" << (actualBufferFrames * 1000 / sampleRate_) << "ms)\n";
+        } else {
+            std::cerr << "[WindowsSpeaker] GetBufferSize failed: 0x" << std::hex << hr << std::dec << "\n";
         }
 
         // 10. Get render client service interface (used to write audio data)
@@ -229,11 +227,6 @@ public:
             audioClient_ = nullptr;
         }
 
-        if (renderEvent_) {
-            CloseHandle(renderEvent_);
-            renderEvent_ = nullptr;
-        }
-
         if (device_) {
             device_->Release();
             device_ = nullptr;
@@ -269,8 +262,34 @@ public:
         }
 
 #ifdef _WIN32
-        if (audioClient_) {
-            HRESULT hr = audioClient_->Start();
+        if (audioClient_ && renderClient_) {
+            // CRITICAL: Prime the buffer with silence before Start()
+            // Microsoft docs: "ensures there is always data in the pipeline so the engine doesn't glitch"
+            // Reference: https://github.com/microsoft/Windows-classic-samples/.../RenderSharedTimerDriven
+            UINT32 bufferFrameCount = 0;
+            HRESULT hr = audioClient_->GetBufferSize(&bufferFrameCount);
+            if (SUCCEEDED(hr)) {
+                // Pre-roll the entire buffer with silence
+                BYTE* pData = nullptr;
+                hr = renderClient_->GetBuffer(bufferFrameCount, &pData);
+                if (SUCCEEDED(hr)) {
+                    // Release with SILENT flag - fills buffer with zeros
+                    hr = renderClient_->ReleaseBuffer(bufferFrameCount, AUDCLNT_BUFFERFLAGS_SILENT);
+                    if (SUCCEEDED(hr)) {
+                        std::cerr << "[WindowsSpeaker] Buffer primed with " << bufferFrameCount
+                                  << " frames of silence\n";
+                    } else {
+                        std::cerr << "[WindowsSpeaker] ReleaseBuffer (prime) failed: 0x"
+                                  << std::hex << hr << std::dec << "\n";
+                    }
+                } else {
+                    std::cerr << "[WindowsSpeaker] GetBuffer (prime) failed: 0x"
+                              << std::hex << hr << std::dec << "\n";
+                }
+            }
+
+            // Now start the audio engine
+            hr = audioClient_->Start();
             if (FAILED(hr)) {
                 std::cerr << "[WindowsSpeaker] Start failed: 0x" << std::hex << hr << std::dec << "\n";
                 return false;
@@ -527,7 +546,6 @@ private:
     IMMDevice* device_;
     IAudioClient* audioClient_;
     IAudioRenderClient* renderClient_;
-    HANDLE renderEvent_;
 #endif
 
     // COM state
