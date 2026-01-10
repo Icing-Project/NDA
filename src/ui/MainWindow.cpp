@@ -1,5 +1,6 @@
 #include "ui/MainWindow.h"
 #include "ui/UnifiedPipelineView.h"
+#include "plugins/PluginPaths.h"
 #include <QAction>
 #include <QCoreApplication>
 #include <QDebug>
@@ -101,57 +102,50 @@ void MainWindow::autoLoadPlugins()
     if (!pluginManager_) return;
 
 #ifndef NDA_ENABLE_PYTHON
-    qDebug() << "Python plugin support is disabled in this build; .py plugins will not be loaded";
+    qDebug() << "[MainWindow] Python plugin support disabled in this build";
 #endif
-
-    // Auto-discover plugins from standard directories
-    const QString appDir = QCoreApplication::applicationDirPath();
-
-    // Python plugins
-    QStringList pythonCandidates = {
-        appDir + "/plugins_py",
-        appDir + "/../plugins_py",
-        appDir + "/../../plugins_py"
-    };
-
-    // C++ plugins
-    QStringList cppCandidates = {
-        appDir + "/plugins",
-        appDir + "/plugins/Release",
-        appDir + "/plugins/Debug",
-        appDir + "/../build/plugins",
-        appDir + "/../../build/plugins"
-    };
 
     int loadedCount = 0;
 
 #ifdef NDA_ENABLE_PYTHON
-    // Load Python plugins
-    for (const auto& dir : pythonCandidates) {
+    // Load Python plugins using centralized path resolution
+    auto pythonPaths = nda::PluginPaths::getPythonPluginSearchPaths();
+    for (const auto& dir : pythonPaths) {
         if (QDir(dir).exists()) {
-            auto paths = pluginManager_->scanPluginDirectory(dir.toStdString());
-            for (const auto& path : paths) {
+            auto pluginFiles = pluginManager_->scanPluginDirectory(dir.toStdString());
+            for (const auto& path : pluginFiles) {
                 if (pluginManager_->loadPlugin(path)) {
                     loadedCount++;
                 }
+            }
+            if (!pluginFiles.empty()) {
+                qDebug() << "[MainWindow] Found" << pluginFiles.size()
+                         << "Python plugins in:" << dir;
+                break;  // Stop after first successful directory
             }
         }
     }
 #endif
 
-    // Load C++ plugins
-    for (const auto& dir : cppCandidates) {
+    // Load C++ plugins using centralized path resolution
+    auto cppPaths = nda::PluginPaths::getCppPluginSearchPaths();
+    for (const auto& dir : cppPaths) {
         if (QDir(dir).exists()) {
-            auto paths = pluginManager_->scanPluginDirectory(dir.toStdString());
-            for (const auto& path : paths) {
+            auto pluginFiles = pluginManager_->scanPluginDirectory(dir.toStdString());
+            for (const auto& path : pluginFiles) {
                 if (pluginManager_->loadPlugin(path)) {
                     loadedCount++;
                 }
             }
+            if (!pluginFiles.empty()) {
+                qDebug() << "[MainWindow] Found" << pluginFiles.size()
+                         << "C++ plugins in:" << dir;
+                break;  // Stop after first successful directory
+            }
         }
     }
 
-    qDebug() << "Auto-loaded" << loadedCount << "plugins on startup";
+    qDebug() << "[MainWindow] Auto-loaded" << loadedCount << "total plugins";
 
     // Notify unified view to refresh plugin lists
     if (unifiedView_) {

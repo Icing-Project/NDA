@@ -157,6 +157,7 @@ set(SOURCES
     src/audio/Resampler.cpp
     src/core/ProcessingPipeline.cpp
     src/plugins/PluginManager.cpp
+    src/plugins/PluginPaths.cpp
 )
 
 # Add Python bridge if enabled
@@ -185,6 +186,7 @@ set(HEADERS
     include/plugins/AudioProcessorPlugin.h
     include/plugins/AudioSinkPlugin.h
     include/plugins/PluginManager.h
+    include/plugins/PluginPaths.h
 )
 
 # Add Python bridge header if enabled
@@ -231,10 +233,19 @@ function(add_nda_plugin target)
     if(WIN32)
         target_compile_definitions(${target} PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
     endif()
+    # Force flat plugin directory (no Release/Debug subdirs)
+    # This makes multi-config generators (Visual Studio) behave like single-config
     set_target_properties(${target} PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${PLUGIN_OUTPUT_DIR}
         LIBRARY_OUTPUT_DIRECTORY ${PLUGIN_OUTPUT_DIR}
         ARCHIVE_OUTPUT_DIRECTORY ${PLUGIN_OUTPUT_DIR}
+        # Override per-config directories to same location
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE ${PLUGIN_OUTPUT_DIR}
+        RUNTIME_OUTPUT_DIRECTORY_DEBUG ${PLUGIN_OUTPUT_DIR}
+        RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${PLUGIN_OUTPUT_DIR}
+        RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL ${PLUGIN_OUTPUT_DIR}
+        LIBRARY_OUTPUT_DIRECTORY_RELEASE ${PLUGIN_OUTPUT_DIR}
+        LIBRARY_OUTPUT_DIRECTORY_DEBUG ${PLUGIN_OUTPUT_DIR}
     )
 endfunction()
 
@@ -254,6 +265,19 @@ if(WIN32)
     )
     target_link_libraries(AIOCSinkPlugin ole32 avrt setupapi hid)
     list(APPEND NDA_PLUGIN_TARGETS AIOCSinkPlugin)
+
+    # Windows speaker/microphone plugins (WASAPI)
+    add_nda_plugin(WindowsSpeakerSinkPlugin
+        plugins_src/WindowsSpeakerSinkPlugin.cpp
+    )
+    target_link_libraries(WindowsSpeakerSinkPlugin ole32)
+    list(APPEND NDA_PLUGIN_TARGETS WindowsSpeakerSinkPlugin)
+
+    add_nda_plugin(WindowsMicrophoneSourcePlugin
+        plugins_src/WindowsMicrophoneSourcePlugin.cpp
+    )
+    target_link_libraries(WindowsMicrophoneSourcePlugin ole32)
+    list(APPEND NDA_PLUGIN_TARGETS WindowsMicrophoneSourcePlugin)
 endif()
 
 add_nda_plugin(SineWaveSourcePlugin plugins_src/SineWaveSourcePlugin.cpp)
