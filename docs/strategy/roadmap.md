@@ -54,7 +54,7 @@ src/plugins/PluginManager.cpp
   - Remove getBearerPlugin() method
   - Remove bearer-specific loading logic
 
-src/ui/PipelineView.cpp
+src/ui/UnifiedPipelineView.cpp (formerly PipelineView.cpp)
   - Remove bearerCombo widget
   - Remove bearer card from UI
   - Remove onBearerChanged() slot
@@ -830,7 +830,7 @@ private:
     std::shared_ptr<nda::ProcessingPipeline> rxPipeline_;
 ```
 
-**File:** `src/ui/PipelineView.cpp`
+**File:** `src/ui/UnifiedPipelineView.cpp` (formerly PipelineView.cpp)
 
 **Redesign `setupUI()`:**
 ```cpp

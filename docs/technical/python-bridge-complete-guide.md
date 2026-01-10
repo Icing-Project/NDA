@@ -568,97 +568,49 @@ This saves initialization time because:
 
 The Python plugin loader supports two modes for maximum flexibility:
 
-### Mode 1: Cython Compilation (10-50x speedup)
+### Plugin Loading (Direct Import)
 
-For CPU-intensive plugins, automatic compilation to native code:
+Plugins are loaded directly via Python's import system:
 
-```python
-# plugins_py/plugin_loader.py:72
-def _try_load_compiled(self, plugin_name: str, plugin_path: Path):
-    """Try to load pre-compiled Cython version"""
+```cpp
+// src/plugins/PythonPluginBridge.cpp
+PyObject* pName = PyUnicode_FromString(moduleName.c_str());
+pModule_ = PyImport_Import(pName);
+Py_DECREF(pName);
 
-    if not self.enable_cython:
-        return None
-
-    # Check for valid cache (SHA256-based invalidation)
-    compiled_path = find_cached_module(plugin_path, self._cache_dir)
-
-    if not compiled_path:
-        # Attempt compilation on first use
-        compiled_path = compile_plugin(plugin_path, self._cache_dir)
-        if not compiled_path:
-            return None  # Fallback to pure Python below
-
-    # Load compiled .pyd (Windows) or .so (Linux)
-    spec = importlib.util.spec_from_file_location(
-        plugin_name, compiled_path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-
-    plugin = module.create_plugin()
-    return plugin if isinstance(plugin, BasePlugin) else None
+// Get factory function and create instance
+PyObject* pFunc = PyObject_GetAttrString(pModule_, "create_plugin");
+pPluginInstance_ = PyObject_CallObject(pFunc, nullptr);
 ```
 
-**Cache structure:**
+**Plugin structure:**
 
 ```
 plugins_py/
-├── sine_wave_source.py
-├── simple_gain.py
-└── .cython_cache/
-    ├── sine_wave_source_<sha256>.so        (Linux compiled)
-    ├── sine_wave_source_<sha256>.pyd       (Windows compiled)
-    ├── simple_gain_<sha256>.so
-    └── simple_gain_<sha256>.pyd
+├── sine_wave_source.py      # Source plugin
+├── simple_gain.py           # Processor plugin
+├── null_sink.py             # Sink plugin
+└── examples/
+    ├── simple_gain.py
+    └── fernet_encryptor.py
 ```
 
-**Cache Invalidation:**
+### Optional: Cython Compilation (Manual)
 
-From `plugins_py/cython_compiler.py`:
-- Uses SHA256 hash of source file
-- Automatically recompiles if source changes
-- Cleans up stale cache on startup
-- No manual cache management needed
-
-### Mode 2: Pure Python Fallback (Always Available)
-
-If Cython unavailable or compilation fails, silently fallback:
+For CPU-intensive plugins, manual Cython compilation is available via `cython_compiler.py`:
 
 ```python
-# plugins_py/plugin_loader.py - Fallback code
-spec = importlib.util.spec_from_file_location(plugin_name, plugin_path)
-module = importlib.util.module_from_spec(spec)
-sys.modules[plugin_name] = module
-spec.loader.exec_module(module)
+from cython_compiler import compile_plugin, get_cache_dir
+from pathlib import Path
 
-plugin = module.create_plugin()
+plugin_dir = Path("plugins_py")
+cache_dir = get_cache_dir(plugin_dir)
+
+# Compile a plugin (uses SHA256-based cache invalidation)
+compiled_path = compile_plugin(plugin_dir / "simple_gain.py", cache_dir)
 ```
 
-**Gracefully handles:**
-- Cython not installed
-- Compilation fails
-- Cache is invalid
-- Platform-specific issues
-
-### Loading Priority
-
-```python
-def load_plugin(self, plugin_name: str) -> Optional[BasePlugin]:
-    # 1. Try compiled version (if Cython enabled)
-    if self.enable_cython:
-        plugin = self._try_load_compiled(plugin_name, plugin_path)
-        if plugin:
-            return plugin  # Success!
-
-    # 2. Fallback to pure Python (always works)
-    spec = importlib.util.spec_from_file_location(plugin_name, plugin_path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[plugin_name] = module
-    spec.loader.exec_module(module)
-
-    plugin = module.create_plugin()
-    return plugin if isinstance(plugin, BasePlugin) else None
-```
+**Note:** Automatic Cython compilation during loading is deprecated. Use manual compilation for performance-critical plugins.
 
 ---
 
@@ -1254,8 +1206,7 @@ Plugins should:
 | `include/plugins/PluginManager.h` | ~50 | Plugin loader interface |
 | `src/plugins/PluginManager.cpp` | ~200 | Plugin loading logic (C++ and Python) |
 | `plugins_py/base_plugin.py` | 345 | Python base classes and enums |
-| `plugins_py/plugin_loader.py` | ~150 | Python plugin discovery and loading |
-| `plugins_py/cython_compiler.py` | ~300 | Cython compilation with SHA256 caching |
+| `plugins_py/cython_compiler.py` | ~300 | Optional Cython compilation with SHA256 caching |
 | `plugins_py/examples/simple_gain.py` | 193 | Example processor plugin |
 | `plugins_py/sine_wave_source.py` | 158 | Example source plugin |
 | `plugins_py/pulseaudio_speaker.py` | ~100 | Example sink plugin |

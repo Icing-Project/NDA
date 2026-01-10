@@ -36,12 +36,11 @@ You should see:
 ## 3. Use from Python
 
 ```python
-from plugin_loader import PluginLoader
 from base_plugin import AudioBuffer
 
-# Load plugin
-loader = PluginLoader(".")
-plugin = loader.load_plugin("sine_wave_source")
+# Import and create plugin directly
+from sine_wave_source import create_plugin
+plugin = create_plugin()
 
 # Initialize and start
 plugin.initialize()
@@ -53,7 +52,7 @@ plugin.read_audio(buffer)
 
 # Stop
 plugin.stop()
-loader.unload_all()
+plugin.shutdown()
 ```
 
 ## 4. Use from C++ Application
@@ -176,7 +175,8 @@ def create_plugin():
 Save as `my_plugin.py` in `plugins_py/` directory, then:
 
 ```python
-plugin = loader.load_plugin("my_plugin")
+from my_plugin import create_plugin
+plugin = create_plugin()
 ```
 
 ## Troubleshooting
@@ -215,7 +215,7 @@ Linux note: soundcard needs PulseAudio, or PipeWire with `pipewire-pulse` enable
 
 ## Next Steps
 
-- Read [PYTHON_PLUGINS.md](../PYTHON_PLUGINS.md) for detailed documentation
-- Check [examples/python_plugin_example.cpp](../examples/python_plugin_example.cpp)
+- Read [docs/development/python-plugins.md](../docs/development/python-plugins.md) for detailed documentation
+- Check the [examples/](examples/) directory for sample plugins
 - Explore the plugin source code
 - Create your own custom plugins!

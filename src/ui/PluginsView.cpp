@@ -134,8 +134,8 @@ void PluginsView::onAutoLoadPythonPlugins()
     dir.setNameFilters(filters);
 
     QStringList excludeFiles;
-    excludeFiles << "base_plugin.py" << "__init__.py" << "plugin_loader.py"
-                 << "test_plugins.py";
+    excludeFiles << "base_plugin.py" << "__init__.py" << "test_plugins.py"
+                 << "cython_compiler.py";
 
     QFileInfoList fileList = dir.entryInfoList(QDir::Files);
 
