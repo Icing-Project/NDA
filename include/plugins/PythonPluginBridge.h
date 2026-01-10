@@ -136,6 +136,11 @@ private:
     PyObject* getOrCreateCachedBuffer(const AudioBuffer& buffer);
     void updateCachedBufferData(const AudioBuffer& buffer, PyObject* pyBuffer);
 
+    // Plugin loading helper methods
+    PyObject* loadWithPluginLoader(const std::string& moduleName,
+                                   const std::string& pluginDir);
+    PyObject* loadDirectImport(const std::string& moduleName);
+
     struct ProfilingData;
     mutable std::unique_ptr<ProfilingData> profiling_;
 };

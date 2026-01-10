@@ -292,48 +292,30 @@ bool PythonPluginBridge::loadPlugin(const std::string& pluginPath, const std::st
     }
     moduleName_ = moduleName;
 
-    // Direct import of Python plugin module
     std::cout << "[PythonBridge] Loading plugin: " << moduleName << std::endl;
 
-    PyObject* pName = PyUnicode_FromString(moduleName.c_str());
-    pModule_ = PyImport_Import(pName);
-    Py_DECREF(pName);
+    // Try plugin_loader first (with Cython compilation support)
+    pPluginInstance_ = loadWithPluginLoader(moduleName, pluginDir);
 
-    if (!pModule_) {
-        PyErr_Print();
-        std::cerr << "[PythonBridge] Failed to load module: " << moduleName << std::endl;
-        return false;
+    if (pPluginInstance_) {
+        state_ = PluginState::Loaded;
+        initializeCache();
+        std::cout << "[PythonBridge] Successfully loaded plugin via plugin_loader: " << moduleName << std::endl;
+        return true;
     }
 
-    // Get the create_plugin factory function
-    PyObject* pFunc = PyObject_GetAttrString(pModule_, "create_plugin");
-    if (!pFunc || !PyCallable_Check(pFunc)) {
-        std::cerr << "[PythonBridge] Cannot find function 'create_plugin'" << std::endl;
-        Py_XDECREF(pFunc);
-        Py_DECREF(pModule_);
-        pModule_ = nullptr;
-        return false;
+    // Fallback: direct import (old method, no Cython compilation)
+    pPluginInstance_ = loadDirectImport(moduleName);
+
+    if (pPluginInstance_) {
+        state_ = PluginState::Loaded;
+        initializeCache();
+        std::cout << "[PythonBridge] Successfully loaded plugin via direct import (fallback): " << moduleName << std::endl;
+        return true;
     }
 
-    // Call create_plugin()
-    pPluginInstance_ = PyObject_CallObject(pFunc, nullptr);
-    Py_DECREF(pFunc);
-
-    if (!pPluginInstance_) {
-        PyErr_Print();
-        std::cerr << "[PythonBridge] Failed to create plugin instance" << std::endl;
-        Py_DECREF(pModule_);
-        pModule_ = nullptr;
-        return false;
-    }
-
-    state_ = PluginState::Loaded;
-    
-    // v2.0: Initialize optimization cache after plugin instance created
-    initializeCache();
-    
-    std::cout << "[PythonBridge] Successfully loaded Python plugin: " << moduleName << std::endl;
-    return true;
+    std::cerr << "[PythonBridge] Failed to load plugin: " << moduleName << std::endl;
+    return false;
 }
 
 bool PythonPluginBridge::initialize() {
@@ -1379,6 +1361,91 @@ void PythonPluginBridge::copyFromPythonBuffer(PyObject* pyBuffer, AudioBuffer& b
 
     // Only DECREF if we acquired it in this call (not using cached)
     Py_XDECREF(pyData);
+}
+
+// Plugin loading helper methods
+
+PyObject* PythonPluginBridge::loadWithPluginLoader(const std::string& moduleName,
+                                                    const std::string& pluginDir) {
+    // Try to use plugin_loader module for transparent Cython compilation
+    PyObject* pLoaderModule = PyImport_ImportModule("plugin_loader");
+    if (!pLoaderModule) {
+        // plugin_loader not available - fallback will be used
+        PyErr_Clear();
+        return nullptr;
+    }
+
+    PyObject* pLoaderClass = PyObject_GetAttrString(pLoaderModule, "PluginLoader");
+    if (!pLoaderClass) {
+        PyErr_Clear();
+        Py_DECREF(pLoaderModule);
+        return nullptr;
+    }
+
+    // Create PluginLoader instance with enable_cython=True
+    PyObject* pLoader = PyObject_CallFunction(pLoaderClass, "sb",
+                                              pluginDir.c_str(), true);
+    if (!pLoader) {
+        PyErr_Clear();
+        Py_DECREF(pLoaderClass);
+        Py_DECREF(pLoaderModule);
+        return nullptr;
+    }
+
+    // Call loader.load_plugin(moduleName) - returns plugin instance directly
+    PyObject* pInstance = PyObject_CallMethod(pLoader, "load_plugin", "s",
+                                              moduleName.c_str());
+
+    // Cleanup
+    Py_DECREF(pLoader);
+    Py_DECREF(pLoaderClass);
+    Py_DECREF(pLoaderModule);
+
+    if (!pInstance) {
+        // Loading failed - clear error and return nullptr for fallback
+        PyErr_Clear();
+        return nullptr;
+    }
+
+    // Success - plugin_loader returns instance directly
+    return pInstance;
+}
+
+PyObject* PythonPluginBridge::loadDirectImport(const std::string& moduleName) {
+    // Direct import method (original implementation, no Cython compilation)
+    PyObject* pName = PyUnicode_FromString(moduleName.c_str());
+    pModule_ = PyImport_Import(pName);
+    Py_DECREF(pName);
+
+    if (!pModule_) {
+        PyErr_Print();
+        std::cerr << "[PythonBridge] Failed to import module: " << moduleName << std::endl;
+        return nullptr;
+    }
+
+    // Get the create_plugin factory function
+    PyObject* pFunc = PyObject_GetAttrString(pModule_, "create_plugin");
+    if (!pFunc || !PyCallable_Check(pFunc)) {
+        std::cerr << "[PythonBridge] Cannot find function 'create_plugin'" << std::endl;
+        Py_XDECREF(pFunc);
+        Py_DECREF(pModule_);
+        pModule_ = nullptr;
+        return nullptr;
+    }
+
+    // Call create_plugin()
+    PyObject* pInstance = PyObject_CallObject(pFunc, nullptr);
+    Py_DECREF(pFunc);
+
+    if (!pInstance) {
+        PyErr_Print();
+        std::cerr << "[PythonBridge] Failed to create plugin instance" << std::endl;
+        Py_DECREF(pModule_);
+        pModule_ = nullptr;
+        return nullptr;
+    }
+
+    return pInstance;
 }
 
 } // namespace nda
