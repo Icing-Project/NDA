@@ -11,6 +11,7 @@
 #include <thread>
 #include <atomic>
 #include <chrono>
+#include <mutex>
 
 namespace nda {
 
@@ -29,6 +30,9 @@ public:
     bool start();
     void stop();
     void shutdown();
+
+    // Bridge Mode preset (v2.1 stabilization)
+    void enableBridgeMode();
 
     // State
     bool isRunning() const { return isRunning_; }
@@ -49,7 +53,23 @@ public:
     uint64_t getBackpressureWaits() const { return backpressureWaits_; }
     uint64_t getConsecutiveFailures() const { return consecutiveFailures_; }
     uint64_t getProcessorFailures() const { return processorFailures_; }
-    
+
+    // v2.1: Drift and timing metrics
+    double getCurrentDriftMs() const;     // Current drift from real-time target
+    double getMaxDriftMs() const;         // Maximum drift seen this session
+
+    // v2.1: Underrun/overrun counters
+    uint64_t getReadFailures() const;     // Source read failures (underruns)
+    uint64_t getWriteFailures() const;    // Sink write failures (overruns)
+
+    // v2.1: Health indicator
+    enum class HealthStatus {
+        OK,         // All metrics nominal
+        Degraded,   // Drift >10ms or failures >10
+        Failing     // Drift >50ms or failures >100
+    };
+    HealthStatus getHealthStatus() const;
+
     // v2.0: Runtime metrics
     double getUptime() const;
     double getRealTimeRatio() const;
@@ -88,6 +108,13 @@ private:
     uint64_t backpressureWaits_;
     uint64_t consecutiveFailures_;
     uint64_t processorFailures_;
+
+    // v2.1: Drift tracking metrics
+    mutable std::mutex metricsMutex_;  // Protects drift metrics
+    double currentDriftMs_;
+    double maxDriftMs_;
+    std::atomic<uint64_t> readFailures_;
+    std::atomic<uint64_t> writeFailures_;
 
     BackpressureMode backpressureMode_;
     int backpressureSleepMs_;

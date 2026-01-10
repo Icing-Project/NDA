@@ -64,7 +64,10 @@ private slots:
     // Global controls
     void onStartBothClicked();
     void onStopBothClicked();
-    
+
+    // Bridge Mode (v2.1)
+    void onBridgeModeClicked();
+
     // Metrics update
     void updateMetrics();
     
@@ -102,7 +105,13 @@ private:
     QPushButton *stopTXButton_;
     QProgressBar *txInputMeterL_;
     QProgressBar *txInputMeterR_;
-    
+
+    // TX diagnostics (v2.1)
+    QLabel *txHealthLabel_;
+    QLabel *txDriftLabel_;
+    QLabel *txReadFailsLabel_;
+    QLabel *txWriteFailsLabel_;
+
     // RX pipeline UI components
     QComboBox *rxSourceCombo_;
     QComboBox *rxProcessorCombo_;
@@ -114,11 +123,21 @@ private:
     QPushButton *stopRXButton_;
     QProgressBar *rxOutputMeterL_;
     QProgressBar *rxOutputMeterR_;
+
+    // RX diagnostics (v2.1)
+    QLabel *rxHealthLabel_;
+    QLabel *rxDriftLabel_;
+    QLabel *rxReadFailsLabel_;
+    QLabel *rxWriteFailsLabel_;
     
     // Global controls
+    QPushButton *bridgeModeButton_;  // v2.1: One-click Bridge Mode setup
     QPushButton *startBothButton_;
     QPushButton *stopBothButton_;
     QPushButton *settingsButton_;
+
+    // Bridge Mode state (v2.1)
+    bool bridgeModeActive_;
     
     // Plugin sidebar
     PluginSidebar *pluginSidebar_;

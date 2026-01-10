@@ -2,12 +2,12 @@
 setlocal enabledelayedexpansion
 
 REM ============================================================================
-REM NDA Windows Build Script
+REM NDA Windows Development Build Script (with Python enabled)
 REM ============================================================================
 REM Requirements:
 REM   - CMake 3.16+
 REM   - Qt6 (with MSVC)
-REM   - Python 3.8+ with development headers
+REM   - Python 3.8+ with development headers and NumPy
 REM   - Visual Studio 2022 or Build Tools
 REM   - OpenSSL 3.x Win64
 REM
@@ -15,10 +15,10 @@ REM For fresh setup, run: scripts\setup_windows.bat
 REM ============================================================================
 
 echo ================================================
-echo NDA - Windows Build Script (Release)
+echo NDA - Windows Development Build Script
 echo ================================================
-echo Python plugins: DISABLED (stability mode)
-echo For development build with Python, use: build_windows_dev.bat
+echo Python plugins: ENABLED (development mode)
+echo For release build without Python, use: build_windows.bat
 echo.
 
 REM ============================================================================
@@ -41,6 +41,15 @@ python --version >nul 2>&1
 if %ERRORLEVEL% NEQ 0 (
     echo [ERROR] Python not found!
     echo Please run scripts\setup_windows.bat to install dependencies.
+    pause
+    exit /b 1
+)
+
+REM Check NumPy
+python -c "import numpy" >nul 2>&1
+if %ERRORLEVEL% NEQ 0 (
+    echo [ERROR] NumPy not found!
+    echo Please install NumPy: pip install numpy
     pause
     exit /b 1
 )
@@ -94,12 +103,12 @@ if not exist build (
 
 cd build
 
-REM Configure with CMake (Python DISABLED for release stability)
-echo Configuring with CMake (Python DISABLED)...
+REM Configure with CMake (Python ENABLED for development)
+echo Configuring with CMake (Python ENABLED)...
 cmake .. -G "Visual Studio 17 2022" -A x64 ^
     -DCMAKE_PREFIX_PATH="%QT_PATH%" ^
     -DOPENSSL_ROOT_DIR="%OPENSSL_PATH%" ^
-    -DNDA_ENABLE_PYTHON=OFF
+    -DNDA_ENABLE_PYTHON=ON
 
 if %ERRORLEVEL% NEQ 0 (
     echo.
@@ -110,7 +119,8 @@ if %ERRORLEVEL% NEQ 0 (
     echo Troubleshooting:
     echo   1. Run scripts\setup_windows.bat to verify all dependencies
     echo   2. Check that Python development headers are installed
-    echo   3. Ensure Visual Studio 2022 with C++ workload is installed
+    echo   3. Ensure NumPy is installed: pip install numpy
+    echo   4. Ensure Visual Studio 2022 with C++ workload is installed
     echo.
     echo For detailed setup instructions, see: docs\guides\installation.md
     echo.
@@ -119,8 +129,8 @@ if %ERRORLEVEL% NEQ 0 (
 )
 
 echo.
-echo Building NDA...
-cmake --build . --config Release
+echo Building NDA (Debug configuration with Python)...
+cmake --build . --config Debug
 
 if %ERRORLEVEL% NEQ 0 (
     echo Build failed!
@@ -130,12 +140,15 @@ if %ERRORLEVEL% NEQ 0 (
 
 echo.
 echo ================================================
-echo Build completed successfully!
+echo Development Build completed successfully!
 echo ================================================
 echo.
-echo Executable: build\Release\NDA.exe
+echo Executable: build\Debug\NDA.exe
 echo.
-echo To install Python dependencies:
-echo   pip install -r requirements.txt
+echo Python plugin support: ENABLED
+echo Python plugins directory: plugins_py\
+echo.
+echo To verify Python plugins:
+echo   build\Debug\NDA.exe
 echo.
 pause
