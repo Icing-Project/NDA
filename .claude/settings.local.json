@@ -7,7 +7,11 @@
       "Bash(__NEW_LINE__ wc -l /mnt/c/Users/Steph/Desktop/Icing/Dev/NDA/AGENTS.md)",
       "Bash(__NEW_LINE__ cat /mnt/c/Users/Steph/Desktop/Icing/Dev/NDA/AGENTS.md)",
       "Bash(wc:*)",
-      "Bash(xargs:*)"
+      "Bash(xargs:*)",
+      "Bash(./NDA:*)",
+      "Bash(python3:*)",
+      "Bash(pip3 install:*)",
+      "Bash(sudo apt-get install:*)"
     ]
   }
 }

@@ -16,6 +16,7 @@ namespace nda {
 
 // Static initialization
 bool PythonPluginBridge::pythonInitialized_ = false;
+PyObject* PythonPluginBridge::pythonPluginLoader_ = nullptr;
 
 // Helper to initialize NumPy - must be void* return for import_array macro
 static int initializeNumPy() {
@@ -244,6 +245,9 @@ PythonPluginBridge::PythonPluginBridge()
         } else {
             PyErr_Clear();
         }
+
+        // Note: PluginLoader will be initialized lazily on first plugin load
+        // This allows using the correct plugin directory path
     }
 }
 
@@ -289,37 +293,99 @@ bool PythonPluginBridge::loadPlugin(const std::string& pluginPath, const std::st
     }
     moduleName_ = moduleName;
 
-    // Import the module
-    PyObject* pName = PyUnicode_FromString(moduleName.c_str());
-    pModule_ = PyImport_Import(pName);
-    Py_DECREF(pName);
+    // Initialize PluginLoader lazily on first use (with correct plugin directory)
+    if (!pythonPluginLoader_) {
+        bool enableCython = !isTruthyEnv("NDA_DISABLE_CYTHON");
 
-    if (!pModule_) {
-        PyErr_Print();
-        std::cerr << "[PythonBridge] Failed to load module: " << moduleName << std::endl;
-        return false;
+        PyObject* pluginLoaderModule = PyImport_ImportModule("plugin_loader");
+        if (pluginLoaderModule) {
+            PyObject* pluginLoaderClass = PyObject_GetAttrString(pluginLoaderModule, "PluginLoader");
+            if (pluginLoaderClass) {
+                // Create PluginLoader instance with the actual plugin directory
+                pythonPluginLoader_ = PyObject_CallFunction(
+                    pluginLoaderClass, "si",
+                    pluginDir.c_str(),
+                    enableCython ? 1 : 0
+                );
+                if (pythonPluginLoader_) {
+                    std::cout << "[PythonBridge] PluginLoader initialized (dir: " << pluginDir
+                              << ", Cython: " << (enableCython ? "enabled" : "disabled") << ")" << std::endl;
+                } else {
+                    std::cerr << "[PythonBridge] Failed to create PluginLoader instance" << std::endl;
+                    PyErr_Print();
+                }
+                Py_DECREF(pluginLoaderClass);
+            } else {
+                std::cerr << "[PythonBridge] Failed to get PluginLoader class" << std::endl;
+                PyErr_Print();
+            }
+            Py_DECREF(pluginLoaderModule);
+        } else {
+            std::cerr << "[PythonBridge] Failed to import plugin_loader (Cython disabled)" << std::endl;
+            PyErr_Print();
+        }
     }
 
-    // Get the create_plugin factory function
-    PyObject* pFunc = PyObject_GetAttrString(pModule_, "create_plugin");
-    if (!pFunc || !PyCallable_Check(pFunc)) {
-        std::cerr << "[PythonBridge] Cannot find function 'create_plugin'" << std::endl;
-        Py_XDECREF(pFunc);
-        Py_DECREF(pModule_);
-        pModule_ = nullptr;
-        return false;
-    }
+    // Try using PluginLoader for Cython auto-compilation
+    if (pythonPluginLoader_) {
+        std::cout << "[PythonBridge] Loading plugin via PluginLoader (with Cython support): " << moduleName << std::endl;
 
-    // Call create_plugin()
-    pPluginInstance_ = PyObject_CallObject(pFunc, nullptr);
-    Py_DECREF(pFunc);
+        // Call PluginLoader.load_plugin(plugin_name)
+        pPluginInstance_ = PyObject_CallMethod(pythonPluginLoader_, "load_plugin", "s", moduleName.c_str());
 
-    if (!pPluginInstance_) {
-        PyErr_Print();
-        std::cerr << "[PythonBridge] Failed to create plugin instance" << std::endl;
-        Py_DECREF(pModule_);
-        pModule_ = nullptr;
-        return false;
+        if (pPluginInstance_ && pPluginInstance_ != Py_None) {
+            // Successfully loaded via PluginLoader
+            // Get the module reference for compatibility (optional, but good to have)
+            PyObject* sysModules = PyImport_GetModuleDict();
+            pModule_ = PyDict_GetItemString(sysModules, moduleName.c_str());
+            if (pModule_) {
+                Py_INCREF(pModule_);  // GetItemString returns borrowed reference
+            }
+
+            std::cout << "[PythonBridge] Plugin loaded successfully via PluginLoader" << std::endl;
+        } else {
+            // PluginLoader returned None or failed
+            std::cerr << "[PythonBridge] PluginLoader.load_plugin() returned None or failed" << std::endl;
+            PyErr_Print();
+            Py_XDECREF(pPluginInstance_);
+            pPluginInstance_ = nullptr;
+            return false;
+        }
+    } else {
+        // Fallback: Direct import (legacy method without Cython compilation)
+        std::cout << "[PythonBridge] Loading plugin via direct import (Cython disabled): " << moduleName << std::endl;
+
+        PyObject* pName = PyUnicode_FromString(moduleName.c_str());
+        pModule_ = PyImport_Import(pName);
+        Py_DECREF(pName);
+
+        if (!pModule_) {
+            PyErr_Print();
+            std::cerr << "[PythonBridge] Failed to load module: " << moduleName << std::endl;
+            return false;
+        }
+
+        // Get the create_plugin factory function
+        PyObject* pFunc = PyObject_GetAttrString(pModule_, "create_plugin");
+        if (!pFunc || !PyCallable_Check(pFunc)) {
+            std::cerr << "[PythonBridge] Cannot find function 'create_plugin'" << std::endl;
+            Py_XDECREF(pFunc);
+            Py_DECREF(pModule_);
+            pModule_ = nullptr;
+            return false;
+        }
+
+        // Call create_plugin()
+        pPluginInstance_ = PyObject_CallObject(pFunc, nullptr);
+        Py_DECREF(pFunc);
+
+        if (!pPluginInstance_) {
+            PyErr_Print();
+            std::cerr << "[PythonBridge] Failed to create plugin instance" << std::endl;
+            Py_DECREF(pModule_);
+            pModule_ = nullptr;
+            return false;
+        }
     }
 
     state_ = PluginState::Loaded;
@@ -646,6 +712,12 @@ PluginState PythonPluginBridge::getState() const {
 
 bool PythonPluginBridge::readAudio(AudioBuffer& buffer) {
     if (state_ != PluginState::Running || !pPluginInstance_) {
+        static int stateErrCount = 0;
+        if (++stateErrCount <= 3) {
+            std::cerr << "[PythonBridge] readAudio() blocked: state=" << (int)state_
+                      << " instance=" << (pPluginInstance_ ? "valid" : "null")
+                      << " module=" << moduleName_ << std::endl;
+        }
         return false;
     }
 
@@ -705,8 +777,9 @@ bool PythonPluginBridge::readAudio(AudioBuffer& buffer) {
         // Fallback
         result = PyObject_CallMethod(pPluginInstance_, "read_audio", "O", pBuffer);
     }
-     
+
     if (!result) {
+        std::cerr << "[PythonBridge] readAudio() call returned NULL for " << moduleName_ << std::endl;
         PyErr_Print();
         if (!cachedBufferInstance_ || pBuffer != cachedBufferInstance_) {
             Py_DECREF(pBuffer);
@@ -718,11 +791,39 @@ bool PythonPluginBridge::readAudio(AudioBuffer& buffer) {
         return finish(false);
     }
 
+    // Log return value type for debugging
+    static int logCount = 0;
+    if (++logCount <= 5) {
+        std::cout << "[PythonBridge] readAudio() returned type: " << result->ob_type->tp_name
+                  << " for " << moduleName_ << std::endl;
+    }
+
     if (profiling_) {
         profiling_->readPyCallUs.add(toMicros(std::chrono::steady_clock::now() - pyCallStart));
     }
 
-    bool success = PyObject_IsTrue(result);
+    // Check for error in PyObject_IsTrue
+    int truthValue = PyObject_IsTrue(result);
+    if (truthValue == -1) {
+        // Error occurred
+        std::cerr << "[PythonBridge] PyObject_IsTrue error in readAudio()" << std::endl;
+        PyErr_Print();
+        Py_DECREF(result);
+        if (!cachedBufferInstance_ || pBuffer != cachedBufferInstance_) {
+            Py_DECREF(pBuffer);
+        }
+        if (profiling_) profiling_->readErrors++;
+        return finish(false);
+    }
+
+    bool success = (truthValue == 1);
+
+    // Log success/failure for debugging
+    if (logCount <= 5) {
+        std::cout << "[PythonBridge] readAudio() truthValue=" << truthValue
+                  << " success=" << success << " for " << moduleName_ << std::endl;
+    }
+
     Py_DECREF(result);
 
     if (success) {
@@ -735,11 +836,23 @@ bool PythonPluginBridge::readAudio(AudioBuffer& buffer) {
         if (profiling_) {
             profiling_->readCopyUs.add(toMicros(std::chrono::steady_clock::now() - copyStart));
         }
+    } else {
+        // Log when readAudio returns False
+        static int falseCount = 0;
+        if (++falseCount <= 3) {
+            std::cerr << "[PythonBridge] readAudio() returned False for " << moduleName_ << std::endl;
+        }
     }
 
     // Don't DECREF if using cached buffer
     if (!cachedBufferInstance_ || pBuffer != cachedBufferInstance_) {
         Py_DECREF(pBuffer);
+    }
+
+    // Log final state
+    if (logCount <= 5) {
+        std::cout << "[PythonBridge] readAudio() finishing with success=" << success
+                  << " state=" << (int)state_ << " for " << moduleName_ << std::endl;
     }
 
     return finish(success);
@@ -1257,6 +1370,11 @@ PyObject* PythonPluginBridge::createPythonAudioBuffer(const AudioBuffer& buffer)
 
 // v2.1 Optimization: Use cached data pointer when available
 void PythonPluginBridge::copyFromPythonBuffer(PyObject* pyBuffer, AudioBuffer& buffer) const {
+    static int copyLogCount = 0;
+    if (++copyLogCount <= 5) {
+        std::cout << "[PythonBridge] copyFromPythonBuffer called for " << moduleName_ << std::endl;
+    }
+
     if (!pyBuffer) {
         std::cerr << "[PythonBridge] Python buffer is null" << std::endl;
         return;
@@ -1268,7 +1386,13 @@ void PythonPluginBridge::copyFromPythonBuffer(PyObject* pyBuffer, AudioBuffer& b
     // OPTIMIZATION: Use cached pointer if available (avoids per-frame PyObject_GetAttrString)
     if (cachedDataPtr_ && pyBuffer == cachedBufferInstance_) {
         arrayData = cachedDataPtr_;
+        if (copyLogCount <= 5) {
+            std::cout << "[PythonBridge] Using cached data pointer" << std::endl;
+        }
     } else {
+        if (copyLogCount <= 5) {
+            std::cout << "[PythonBridge] Using fallback data pointer lookup" << std::endl;
+        }
         // Fallback: Get the data attribute (numpy array)
         pyData = PyObject_GetAttrString(pyBuffer, "data");
         if (!pyData) {
@@ -1294,6 +1418,7 @@ void PythonPluginBridge::copyFromPythonBuffer(PyObject* pyBuffer, AudioBuffer& b
 
     // OPTIMIZATION: Fast memcpy per channel (NOT element-by-element loop)
     const int frames = buffer.getFrameCount();
+    int copiedChannels = 0;
     for (int ch = 0; ch < buffer.getChannelCount(); ++ch) {
         float* channelData = buffer.getChannelData(ch);
         if (!channelData) {
@@ -1305,6 +1430,12 @@ void PythonPluginBridge::copyFromPythonBuffer(PyObject* pyBuffer, AudioBuffer& b
             arrayData + (ch * frames),
             frames * sizeof(float)
         );
+        copiedChannels++;
+    }
+
+    if (copyLogCount <= 5) {
+        std::cout << "[PythonBridge] Copied " << copiedChannels << " channels, "
+                  << frames << " frames" << std::endl;
     }
 
     // Only DECREF if we acquired it in this call (not using cached)

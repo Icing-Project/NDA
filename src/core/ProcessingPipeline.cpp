@@ -927,6 +927,12 @@ bool safePluginCall(const char* pluginName, const char* operation, Func&& func, 
 
 void ProcessingPipeline::processAudioFrame()
 {
+    static int frameDebugCount = 0;
+    if (++frameDebugCount <= 5) {
+        std::cout << "[Pipeline] processAudioFrame #" << frameDebugCount
+                  << " isRunning=" << isRunning_.load() << std::endl;
+    }
+
     if (!source_ || !sink_) return;
 
     auto frameStart = std::chrono::steady_clock::now();
@@ -980,6 +986,12 @@ void ProcessingPipeline::processAudioFrame()
     bool readOk = safePluginCall(source_->getInfo().name.c_str(), "readAudio",
                                    [&]() { return source_->readAudio(workBuffer_); }, isRunning_);
 
+    static int debugReadCount = 0;
+    if (++debugReadCount <= 5) {
+        std::cout << "[Pipeline] Read #" << debugReadCount << " readOk=" << readOk
+                  << " isRunning=" << isRunning_.load() << std::endl;
+    }
+
     if (!readOk) {
         consecutiveFailures_++;
         readUs = toMicros(std::chrono::steady_clock::now() - readStart);
@@ -997,10 +1009,8 @@ void ProcessingPipeline::processAudioFrame()
             std::cerr << "[Pipeline] " << consecutiveFailures_ << " consecutive read failures" << std::endl;
         }
 
-        // Check if pipeline was stopped due to exception
-        if (!isRunning_) {
-            return;  // Exit immediately on critical failure
-        }
+        // v2.2: Allow current frame to complete even if stop() was called mid-frame
+        // Removed early exit here - let the frame finish writing to avoid buffer underruns
 
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
         maybeLogLongFrame("read_fail");
@@ -1124,10 +1134,8 @@ void ProcessingPipeline::processAudioFrame()
             profiling_->sinkWriteUs.add(toMicros(std::chrono::steady_clock::now() - writeStart));
         }
 
-        // Check if pipeline was stopped due to exception
-        if (!isRunning_) {
-            return;  // Exit immediately on critical failure
-        }
+        // v2.2: Allow current frame to complete even if stop() was called mid-frame
+        // Removed early exit here - let the frame finish writing to avoid audio artifacts
 
         if (writeOk) {
             break;  // Success!
