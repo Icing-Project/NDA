@@ -888,7 +888,7 @@ For now, create a composite processor plugin that chains internally.
 2. Use `null_sink` to isolate source issues
 3. Use `sine_wave_source` to isolate sink issues
 4. Enable Python logging in plugin (`import logging`)
-5. Run Python plugin directly via `plugin_loader.py`
+5. Test plugins directly via `python test_plugins.py`
 
 ---
 

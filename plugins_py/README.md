@@ -45,14 +45,11 @@ sudo apt install pulseaudio libportaudio2
 ### Basic Plugin Loading
 
 ```python
-from plugin_loader import PluginLoader
 from base_plugin import AudioBuffer
 
-# Create loader
-loader = PluginLoader("plugins_py")
-
-# Load a plugin
-plugin = loader.load_plugin("sine_wave_source")
+# Import and create plugin directly
+from sine_wave_source import create_plugin
+plugin = create_plugin()
 
 # Initialize and configure
 plugin.initialize()
@@ -68,7 +65,7 @@ plugin.read_audio(buffer)
 
 # Stop and cleanup
 plugin.stop()
-loader.unload_all()
+plugin.shutdown()
 ```
 
 ### Test Script

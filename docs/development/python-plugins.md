@@ -529,10 +529,11 @@ processor.shutdown()
 ### Integration Test
 
 ```bash
-# Load plugin in NDA
-python plugins_py/plugin_loader.py plugins_py/examples/my_processor.py
+# Test your plugin from command line
+cd plugins_py
+python test_plugins.py
 
-# Or use in full pipeline
+# Or use in full pipeline via the NDA GUI:
 # Configure TX pipeline:
 #   Source: Sine Wave
 #   Processor: My Processor

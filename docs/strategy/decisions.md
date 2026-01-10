@@ -392,8 +392,7 @@ class PythonPluginBridge : public AudioSourcePlugin,
 
 ### UI Changes
 ```
-📝 src/ui/PipelineView.cpp (REDESIGN for dual pipelines)
-📝 src/ui/Dashboard.cpp (UPDATE for dual metrics)
+✅ src/ui/UnifiedPipelineView.cpp (MERGED PipelineView + Dashboard)
 📝 include/ui/MainWindow.h (ADD second pipeline instance)
 ```
 
