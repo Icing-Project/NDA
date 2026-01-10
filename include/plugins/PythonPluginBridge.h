@@ -113,6 +113,7 @@ private:
     std::string moduleName_;      // For diagnostics/profiling output
 
     static bool pythonInitialized_;  // Python interpreter initialized flag
+    static PyObject* pythonPluginLoader_;  // Python PluginLoader instance for Cython compilation
     
     // v2.0 Optimization: Object and method caching (6-30x performance improvement)
     PyObject* cachedBasePluginModule_;     // base_plugin module (reused across calls)

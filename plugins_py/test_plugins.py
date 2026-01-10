@@ -33,7 +33,7 @@ def discover_plugins(plugin_dir: Path) -> list[str]:
     plugins: list[str] = []
     for p in plugin_dir.glob("*.py"):
         name = p.name
-        if name in {"base_plugin.py", "plugin_loader.py", "test_plugins.py", "__init__.py"}:
+        if name in {"base_plugin.py", "cython_compiler.py", "test_plugins.py", "__init__.py"}:
             continue
         if name.startswith("setup_"):
             continue
