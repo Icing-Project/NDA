@@ -39,7 +39,6 @@ public:
           device_(nullptr),
           audioClient_(nullptr),
           captureClient_(nullptr),
-          captureEvent_(nullptr),
 #endif
           comInitialized_(false),
           comOwned_(false)
@@ -127,17 +126,17 @@ public:
         }
 
         // 7. Calculate buffer duration
-        //    100ms = stable for most systems (balance between latency and stability)
-        int bufferFrames = (sampleRate_ * 100) / 1000;  // 100ms
+        //    200ms = more stable buffer for polling mode (reduces underruns)
+        int bufferFrames = (sampleRate_ * 200) / 1000;  // 200ms
         REFERENCE_TIME bufferDuration = (REFERENCE_TIME)((10000000.0 * bufferFrames) / sampleRate_);
 
-        // 8. Initialize audio client in SHARED mode with EVENT-DRIVEN callback
+        // 8. Initialize audio client in SHARED mode with POLLING (not event-driven)
         //    Shared mode: multiple apps can use device, Windows handles mixing
-        //    Event-driven: more efficient than polling
+        //    No event callback: simpler polling mode, more reliable for our sync API
         hr = audioClient_->Initialize(
             AUDCLNT_SHAREMODE_SHARED,           // Shared mode (not exclusive)
-            AUDCLNT_STREAMFLAGS_EVENTCALLBACK,  // Event-driven (not polling)
-            bufferDuration,                      // Buffer size
+            0,                                   // No special flags - polling mode
+            bufferDuration,                      // Buffer size (200ms)
             0,                                   // Must be 0 in shared mode
             useExtended ? mixFormat : &requestedFormat,
             nullptr                              // No session GUID
@@ -152,12 +151,12 @@ public:
             channels_ = mixFormat->nChannels;
 
             // Recalculate buffer duration for device rate
-            bufferFrames = (sampleRate_ * 100) / 1000;  // 100ms at device rate
+            bufferFrames = (sampleRate_ * 200) / 1000;  // 200ms at device rate
             bufferDuration = (REFERENCE_TIME)((10000000.0 * bufferFrames) / sampleRate_);
 
             hr = audioClient_->Initialize(
                 AUDCLNT_SHAREMODE_SHARED,
-                AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
+                0,  // No event callback
                 bufferDuration,
                 0,
                 mixFormat,
@@ -172,19 +171,14 @@ public:
             return false;
         }
 
-        // 9. Create event for buffer readiness notification
-        captureEvent_ = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-        if (!captureEvent_) {
-            std::cerr << "[WindowsMicrophone] Event creation failed\n";
-            return false;
-        }
-
-        hr = audioClient_->SetEventHandle(captureEvent_);
-        if (FAILED(hr)) {
-            std::cerr << "[WindowsMicrophone] SetEventHandle failed: 0x" << std::hex << hr << std::dec << "\n";
-            CloseHandle(captureEvent_);
-            captureEvent_ = nullptr;
-            return false;
+        // 9. Query the actual allocated buffer size (may differ from request)
+        UINT32 actualBufferFrames = 0;
+        hr = audioClient_->GetBufferSize(&actualBufferFrames);
+        if (SUCCEEDED(hr)) {
+            std::cerr << "[WindowsMicrophone] WASAPI allocated buffer: " << actualBufferFrames
+                      << " frames (" << (actualBufferFrames * 1000 / sampleRate_) << "ms)\n";
+        } else {
+            std::cerr << "[WindowsMicrophone] GetBufferSize failed: 0x" << std::hex << hr << std::dec << "\n";
         }
 
         // 10. Get capture client service interface (used to read audio data)
@@ -226,11 +220,6 @@ public:
         if (audioClient_) {
             audioClient_->Release();
             audioClient_ = nullptr;
-        }
-
-        if (captureEvent_) {
-            CloseHandle(captureEvent_);
-            captureEvent_ = nullptr;
         }
 
         if (device_) {
@@ -518,7 +507,6 @@ private:
     IMMDevice* device_;
     IAudioClient* audioClient_;
     IAudioCaptureClient* captureClient_;
-    HANDLE captureEvent_;
 #endif
 
     // COM state
