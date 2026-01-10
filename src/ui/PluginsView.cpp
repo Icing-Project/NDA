@@ -36,9 +36,11 @@ void PluginsView::setupUI()
     connect(loadButton, &QPushButton::clicked, this, &PluginsView::onLoadPlugin);
     buttonLayout->addWidget(loadButton);
 
+#ifdef NDA_ENABLE_PYTHON
     autoLoadButton = new QPushButton("Auto-Load Python Plugins", this);
     connect(autoLoadButton, &QPushButton::clicked, this, &PluginsView::onAutoLoadPythonPlugins);
     buttonLayout->addWidget(autoLoadButton);
+#endif
 
     unloadButton = new QPushButton("Unload Selected", this);
     unloadButton->setEnabled(false);
@@ -108,6 +110,7 @@ void PluginsView::onPluginSelected(QListWidgetItem *item)
     }
 }
 
+#ifdef NDA_ENABLE_PYTHON
 void PluginsView::onAutoLoadPythonPlugins()
 {
     // Define the plugins_py directory path
@@ -198,3 +201,12 @@ void PluginsView::onAutoLoadPythonPlugins()
     pluginInfoLabel->setText(message);
     QMessageBox::information(this, "Auto-Load Complete", message);
 }
+#else
+void PluginsView::onAutoLoadPythonPlugins()
+{
+    QMessageBox::information(this, "Python Support Disabled",
+        "Python plugin support was disabled at build time.\n\n"
+        "To enable Python plugins, rebuild with:\n"
+        "cmake -DNDA_ENABLE_PYTHON=ON");
+}
+#endif

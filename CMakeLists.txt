@@ -8,7 +8,8 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
 # Option to enable Python plugin support
-option(NDA_ENABLE_PYTHON "Enable Python plugin support" ON)
+# Default: OFF for release builds (stability), set to ON for development
+option(NDA_ENABLE_PYTHON "Enable Python plugin support" OFF)
 
 # Optional overrides for the embedded Python used by `find_package(Python3 ...)`.
 # Note: a virtualenv alone is often insufficient on Windows unless its base Python

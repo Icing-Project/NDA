@@ -26,7 +26,9 @@ private:
 
     QListWidget *pluginList;
     QPushButton *loadButton;
+#ifdef NDA_ENABLE_PYTHON
     QPushButton *autoLoadButton;
+#endif
     QPushButton *unloadButton;
     QLabel *pluginInfoLabel;
 };

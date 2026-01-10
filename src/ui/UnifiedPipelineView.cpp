@@ -1,20 +1,23 @@
 #include "ui/UnifiedPipelineView.h"
-#include <QVBoxLayout>
-#include <QHBoxLayout>
-#include <QGroupBox>
-#include <QMessageBox>
+#include <QFormLayout>
 #include <QFrame>
+#include <QGroupBox>
+#include <QHBoxLayout>
+#include <QMessageBox>
 #include <QSplitter>
+#include <QVBoxLayout>
+#include <iostream>
 
 namespace nda {
 
 UnifiedPipelineView::UnifiedPipelineView(QWidget *parent)
     : QWidget(parent)
     , pttActive_(false)
+    , bridgeModeActive_(false)  // v2.1: Bridge Mode initially off
 {
     setupUI();
     applyModernStyles();
-    
+
     // Setup metrics timer (60 FPS)
     metricsTimer_ = new QTimer(this);
     connect(metricsTimer_, &QTimer::timeout, this, &UnifiedPipelineView::updateMetrics);
@@ -46,33 +49,33 @@ void UnifiedPipelineView::setupUI()
     QHBoxLayout *mainLayout = new QHBoxLayout(this);
     mainLayout->setSpacing(0);
     mainLayout->setContentsMargins(0, 0, 0, 0);
-    
+
     // Main content area
     QWidget *contentArea = new QWidget(this);
     QVBoxLayout *contentLayout = new QVBoxLayout(contentArea);
     contentLayout->setSpacing(10);
     contentLayout->setContentsMargins(20, 20, 20, 20);
-    
+
     // Create TX and RX pipeline rows
     createTXPipelineRow(contentLayout);
     createRXPipelineRow(contentLayout);
-    
+
     // Create control bar
     createControlBar(contentLayout);
-    
+
     contentLayout->addStretch();
-    
+
     // Plugin sidebar
     pluginSidebar_ = new PluginSidebar(this);
     pluginSidebar_->hide();
-    
+
     // Add to splitter for resizable sidebar
     QSplitter *splitter = new QSplitter(Qt::Horizontal, this);
     splitter->addWidget(contentArea);
     splitter->addWidget(pluginSidebar_);
     splitter->setStretchFactor(0, 1);
     splitter->setStretchFactor(1, 0);
-    
+
     mainLayout->addWidget(splitter);
 }
 
@@ -81,16 +84,16 @@ void UnifiedPipelineView::createTXPipelineRow(QVBoxLayout* layout)
     QWidget *txCard = createPipelineCard("TRANSMIT (TX)", true);
     QVBoxLayout *cardLayout = new QVBoxLayout(txCard);
     cardLayout->setSpacing(10);
-    
+
     // Add title label
     QLabel *titleLabel = new QLabel("TRANSMIT (TX)", this);
     titleLabel->setObjectName("pipelineTitle");
     cardLayout->addWidget(titleLabel);
-    
+
     // Pipeline dropdowns row
     QHBoxLayout *pipelineRow = new QHBoxLayout();
     pipelineRow->setSpacing(10);
-    
+
     // Source dropdown
     txSourceCombo_ = new QComboBox(this);
     txSourceCombo_->setObjectName("pipelineCombo");
@@ -99,12 +102,12 @@ void UnifiedPipelineView::createTXPipelineRow(QVBoxLayout* layout)
     connect(txSourceCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &UnifiedPipelineView::onTXSourceChanged);
     pipelineRow->addWidget(txSourceCombo_);
-    
+
     // Arrow label
     QLabel *arrow1 = new QLabel("→", this);
     arrow1->setStyleSheet("color: #94a3b8; font-size: 18px;");
     pipelineRow->addWidget(arrow1);
-    
+
     // Processor dropdown
     txProcessorCombo_ = new QComboBox(this);
     txProcessorCombo_->setObjectName("pipelineCombo");
@@ -113,12 +116,12 @@ void UnifiedPipelineView::createTXPipelineRow(QVBoxLayout* layout)
     connect(txProcessorCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &UnifiedPipelineView::onTXProcessorChanged);
     pipelineRow->addWidget(txProcessorCombo_);
-    
+
     // Arrow label
     QLabel *arrow2 = new QLabel("→", this);
     arrow2->setStyleSheet("color: #94a3b8; font-size: 18px;");
     pipelineRow->addWidget(arrow2);
-    
+
     // Sink dropdown
     txSinkCombo_ = new QComboBox(this);
     txSinkCombo_->setObjectName("pipelineCombo");
@@ -127,34 +130,34 @@ void UnifiedPipelineView::createTXPipelineRow(QVBoxLayout* layout)
     connect(txSinkCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &UnifiedPipelineView::onTXSinkChanged);
     pipelineRow->addWidget(txSinkCombo_);
-    
+
     cardLayout->addLayout(pipelineRow);
-    
+
     // Status and controls row
     QHBoxLayout *statusRow = new QHBoxLayout();
     statusRow->setSpacing(10);
-    
+
     txStatusLabel_ = new QLabel("⚙️ Configure source and sink", this);
     txStatusLabel_->setObjectName("statusLabel");
     txStatusLabel_->setProperty("state", "stopped");
     statusRow->addWidget(txStatusLabel_);
-    
+
     statusRow->addWidget(new QLabel("│", this));
-    
+
     txLatencyLabel_ = new QLabel("--", this);
     txLatencyLabel_->setObjectName("metricLabel");
     statusRow->addWidget(new QLabel("Latency:", this));
     statusRow->addWidget(txLatencyLabel_);
-    
+
     statusRow->addWidget(new QLabel("│", this));
-    
+
     txCPULabel_ = new QLabel("--", this);
     txCPULabel_->setObjectName("metricLabel");
     statusRow->addWidget(new QLabel("CPU:", this));
     statusRow->addWidget(txCPULabel_);
-    
+
     statusRow->addStretch();
-    
+
     // PTT button
     pttButton_ = new QPushButton("🎤 PTT", this);
     pttButton_->setObjectName("pttButton");
@@ -163,7 +166,7 @@ void UnifiedPipelineView::createTXPipelineRow(QVBoxLayout* layout)
     connect(pttButton_, &QPushButton::pressed, this, &UnifiedPipelineView::onPTTPressed);
     connect(pttButton_, &QPushButton::released, this, &UnifiedPipelineView::onPTTReleased);
     statusRow->addWidget(pttButton_);
-    
+
     // Start TX button
     startTXButton_ = new QPushButton("▶ Start TX", this);
     startTXButton_->setObjectName("startButton");
@@ -171,7 +174,7 @@ void UnifiedPipelineView::createTXPipelineRow(QVBoxLayout* layout)
     startTXButton_->setEnabled(false);
     connect(startTXButton_, &QPushButton::clicked, this, &UnifiedPipelineView::onStartTXClicked);
     statusRow->addWidget(startTXButton_);
-    
+
     // Stop TX button
     stopTXButton_ = new QPushButton("■ Stop TX", this);
     stopTXButton_->setObjectName("stopButton");
@@ -179,25 +182,50 @@ void UnifiedPipelineView::createTXPipelineRow(QVBoxLayout* layout)
     stopTXButton_->setEnabled(false);
     connect(stopTXButton_, &QPushButton::clicked, this, &UnifiedPipelineView::onStopTXClicked);
     statusRow->addWidget(stopTXButton_);
-    
+
     cardLayout->addLayout(statusRow);
-    
+
     // Audio meters row
     QHBoxLayout *metersRow = new QHBoxLayout();
     metersRow->setSpacing(10);
-    
+
     QLabel *inputLabel = new QLabel("Input:", this);
     inputLabel->setObjectName("metricLabel");
     metersRow->addWidget(inputLabel);
-    
+
     txInputMeterL_ = createAudioMeter();
     metersRow->addWidget(txInputMeterL_, 1);
-    
+
     txInputMeterR_ = createAudioMeter();
     metersRow->addWidget(txInputMeterR_, 1);
-    
+
     cardLayout->addLayout(metersRow);
-    
+
+    // v2.1: Diagnostics section
+    QGroupBox *txDiagGroup = new QGroupBox("Diagnostics", this);
+    txDiagGroup->setObjectName("diagnosticsGroup");
+    QFormLayout *txDiagLayout = new QFormLayout(txDiagGroup);
+    txDiagLayout->setSpacing(5);
+
+    txHealthLabel_ = new QLabel("⚙️ Not running", this);
+    txHealthLabel_->setObjectName("healthLabel");
+    txHealthLabel_->setStyleSheet("font-weight: bold;");
+    txDiagLayout->addRow("Health:", txHealthLabel_);
+
+    txDriftLabel_ = new QLabel("—", this);
+    txDriftLabel_->setObjectName("metricLabel");
+    txDiagLayout->addRow("Drift:", txDriftLabel_);
+
+    txReadFailsLabel_ = new QLabel("—", this);
+    txReadFailsLabel_->setObjectName("metricLabel");
+    txDiagLayout->addRow("Read Fails:", txReadFailsLabel_);
+
+    txWriteFailsLabel_ = new QLabel("—", this);
+    txWriteFailsLabel_->setObjectName("metricLabel");
+    txDiagLayout->addRow("Write Fails:", txWriteFailsLabel_);
+
+    cardLayout->addWidget(txDiagGroup);
+
     layout->addWidget(txCard);
 }
 
@@ -206,16 +234,16 @@ void UnifiedPipelineView::createRXPipelineRow(QVBoxLayout* layout)
     QWidget *rxCard = createPipelineCard("RECEIVE (RX)", false);
     QVBoxLayout *cardLayout = new QVBoxLayout(rxCard);
     cardLayout->setSpacing(10);
-    
+
     // FIX: Add title label first (since createPipelineCard no longer adds it)
     QLabel *titleLabel = new QLabel("RECEIVE (RX)", this);
     titleLabel->setObjectName("pipelineTitle");
     cardLayout->addWidget(titleLabel);
-    
+
     // Pipeline dropdowns row
     QHBoxLayout *pipelineRow = new QHBoxLayout();
     pipelineRow->setSpacing(10);
-    
+
     // Source dropdown
     rxSourceCombo_ = new QComboBox(this);
     rxSourceCombo_->setObjectName("pipelineCombo");
@@ -224,12 +252,12 @@ void UnifiedPipelineView::createRXPipelineRow(QVBoxLayout* layout)
     connect(rxSourceCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &UnifiedPipelineView::onRXSourceChanged);
     pipelineRow->addWidget(rxSourceCombo_);
-    
+
     // Arrow label
     QLabel *arrow1 = new QLabel("→", this);
     arrow1->setStyleSheet("color: #94a3b8; font-size: 18px;");
     pipelineRow->addWidget(arrow1);
-    
+
     // Processor dropdown
     rxProcessorCombo_ = new QComboBox(this);
     rxProcessorCombo_->setObjectName("pipelineCombo");
@@ -238,12 +266,12 @@ void UnifiedPipelineView::createRXPipelineRow(QVBoxLayout* layout)
     connect(rxProcessorCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &UnifiedPipelineView::onRXProcessorChanged);
     pipelineRow->addWidget(rxProcessorCombo_);
-    
+
     // Arrow label
     QLabel *arrow2 = new QLabel("→", this);
     arrow2->setStyleSheet("color: #94a3b8; font-size: 18px;");
     pipelineRow->addWidget(arrow2);
-    
+
     // Sink dropdown
     rxSinkCombo_ = new QComboBox(this);
     rxSinkCombo_->setObjectName("pipelineCombo");
@@ -252,34 +280,34 @@ void UnifiedPipelineView::createRXPipelineRow(QVBoxLayout* layout)
     connect(rxSinkCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &UnifiedPipelineView::onRXSinkChanged);
     pipelineRow->addWidget(rxSinkCombo_);
-    
+
     cardLayout->addLayout(pipelineRow);
-    
+
     // Status and controls row
     QHBoxLayout *statusRow = new QHBoxLayout();
     statusRow->setSpacing(10);
-    
+
     rxStatusLabel_ = new QLabel("⚙️ Configure source and sink", this);
     rxStatusLabel_->setObjectName("statusLabel");
     rxStatusLabel_->setProperty("state", "stopped");
     statusRow->addWidget(rxStatusLabel_);
-    
+
     statusRow->addWidget(new QLabel("│", this));
-    
+
     rxLatencyLabel_ = new QLabel("--", this);
     rxLatencyLabel_->setObjectName("metricLabel");
     statusRow->addWidget(new QLabel("Latency:", this));
     statusRow->addWidget(rxLatencyLabel_);
-    
+
     statusRow->addWidget(new QLabel("│", this));
-    
+
     rxCPULabel_ = new QLabel("--", this);
     rxCPULabel_->setObjectName("metricLabel");
     statusRow->addWidget(new QLabel("CPU:", this));
     statusRow->addWidget(rxCPULabel_);
-    
+
     statusRow->addStretch();
-    
+
     // Start RX button
     startRXButton_ = new QPushButton("▶ Start RX", this);
     startRXButton_->setObjectName("startButton");
@@ -287,7 +315,7 @@ void UnifiedPipelineView::createRXPipelineRow(QVBoxLayout* layout)
     startRXButton_->setEnabled(false);
     connect(startRXButton_, &QPushButton::clicked, this, &UnifiedPipelineView::onStartRXClicked);
     statusRow->addWidget(startRXButton_);
-    
+
     // Stop RX button
     stopRXButton_ = new QPushButton("■ Stop RX", this);
     stopRXButton_->setObjectName("stopButton");
@@ -295,25 +323,50 @@ void UnifiedPipelineView::createRXPipelineRow(QVBoxLayout* layout)
     stopRXButton_->setEnabled(false);
     connect(stopRXButton_, &QPushButton::clicked, this, &UnifiedPipelineView::onStopRXClicked);
     statusRow->addWidget(stopRXButton_);
-    
+
     cardLayout->addLayout(statusRow);
-    
+
     // Audio meters row
     QHBoxLayout *metersRow = new QHBoxLayout();
     metersRow->setSpacing(10);
-    
+
     QLabel *outputLabel = new QLabel("Output:", this);
     outputLabel->setObjectName("metricLabel");
     metersRow->addWidget(outputLabel);
-    
+
     rxOutputMeterL_ = createAudioMeter();
     metersRow->addWidget(rxOutputMeterL_, 1);
-    
+
     rxOutputMeterR_ = createAudioMeter();
     metersRow->addWidget(rxOutputMeterR_, 1);
-    
+
     cardLayout->addLayout(metersRow);
-    
+
+    // v2.1: Diagnostics section
+    QGroupBox *rxDiagGroup = new QGroupBox("Diagnostics", this);
+    rxDiagGroup->setObjectName("diagnosticsGroup");
+    QFormLayout *rxDiagLayout = new QFormLayout(rxDiagGroup);
+    rxDiagLayout->setSpacing(5);
+
+    rxHealthLabel_ = new QLabel("⚙️ Not running", this);
+    rxHealthLabel_->setObjectName("healthLabel");
+    rxHealthLabel_->setStyleSheet("font-weight: bold;");
+    rxDiagLayout->addRow("Health:", rxHealthLabel_);
+
+    rxDriftLabel_ = new QLabel("—", this);
+    rxDriftLabel_->setObjectName("metricLabel");
+    rxDiagLayout->addRow("Drift:", rxDriftLabel_);
+
+    rxReadFailsLabel_ = new QLabel("—", this);
+    rxReadFailsLabel_->setObjectName("metricLabel");
+    rxDiagLayout->addRow("Read Fails:", rxReadFailsLabel_);
+
+    rxWriteFailsLabel_ = new QLabel("—", this);
+    rxWriteFailsLabel_->setObjectName("metricLabel");
+    rxDiagLayout->addRow("Write Fails:", rxWriteFailsLabel_);
+
+    cardLayout->addWidget(rxDiagGroup);
+
     layout->addWidget(rxCard);
 }
 
@@ -322,7 +375,23 @@ void UnifiedPipelineView::createControlBar(QVBoxLayout* layout)
     QWidget *controlCard = createPipelineCard("", false);
     QHBoxLayout *controlLayout = new QHBoxLayout(controlCard);
     controlLayout->setSpacing(15);
-    
+
+    // v2.1: Bridge Mode preset button
+    bridgeModeButton_ = new QPushButton("🛡️ Configure Bridge Mode", this);
+    bridgeModeButton_->setObjectName("bridgeModeButton");
+    bridgeModeButton_->setMinimumHeight(50);
+    bridgeModeButton_->setMinimumWidth(200);
+    bridgeModeButton_->setStyleSheet("font-weight: bold; background-color: #4CAF50; color: white;");
+    bridgeModeButton_->setToolTip(
+        "One-click setup for stable Windows ⇄ AIOC bridge:\n"
+        "• Forces 48kHz on all devices\n"
+        "• Disables processors (passthrough audio)\n"
+        "• Optimizes timing for stability\n"
+        "• Configures both TX and RX pipelines"
+    );
+    connect(bridgeModeButton_, &QPushButton::clicked, this, &UnifiedPipelineView::onBridgeModeClicked);
+    controlLayout->addWidget(bridgeModeButton_);
+
     // Start Both button
     startBothButton_ = new QPushButton("▶ Start Both", this);
     startBothButton_->setObjectName("startBothButton");
@@ -330,7 +399,7 @@ void UnifiedPipelineView::createControlBar(QVBoxLayout* layout)
     startBothButton_->setEnabled(false);
     connect(startBothButton_, &QPushButton::clicked, this, &UnifiedPipelineView::onStartBothClicked);
     controlLayout->addWidget(startBothButton_);
-    
+
     // Stop Both button
     stopBothButton_ = new QPushButton("■ Stop Both", this);
     stopBothButton_->setObjectName("stopButton");
@@ -338,16 +407,16 @@ void UnifiedPipelineView::createControlBar(QVBoxLayout* layout)
     stopBothButton_->setEnabled(false);
     connect(stopBothButton_, &QPushButton::clicked, this, &UnifiedPipelineView::onStopBothClicked);
     controlLayout->addWidget(stopBothButton_);
-    
+
     controlLayout->addStretch();
-    
+
     // Settings button
     settingsButton_ = new QPushButton("📁 Settings", this);
     settingsButton_->setObjectName("secondaryButton");
     settingsButton_->setMinimumHeight(50);
     settingsButton_->setMinimumWidth(120);
     controlLayout->addWidget(settingsButton_);
-    
+
     layout->addWidget(controlCard);
 }
 
@@ -355,7 +424,7 @@ QWidget* UnifiedPipelineView::createPipelineCard(const QString& title, bool isTX
 {
     QWidget *card = new QWidget(this);
     card->setObjectName("pipelineCard");
-    
+
     // Do NOT create layout here - let caller create it
     // This prevents the layout from being replaced when caller sets their own layout
     return card;
@@ -375,7 +444,7 @@ QProgressBar* UnifiedPipelineView::createAudioMeter()
 void UnifiedPipelineView::refreshPluginLists()
 {
     if (!pluginManager_) return;
-    
+
     // Clear existing items
     txSourceCombo_->clear();
     txProcessorCombo_->clear();
@@ -383,14 +452,14 @@ void UnifiedPipelineView::refreshPluginLists()
     rxSourceCombo_->clear();
     rxProcessorCombo_->clear();
     rxSinkCombo_->clear();
-    
+
     txSourceCombo_->addItem("(None)");
     txProcessorCombo_->addItem("(None - Passthrough)");
     txSinkCombo_->addItem("(None)");
     rxSourceCombo_->addItem("(None)");
     rxProcessorCombo_->addItem("(None - Passthrough)");
     rxSinkCombo_->addItem("(None)");
-    
+
     // Populate from plugin manager
     auto sources = pluginManager_->getPluginsByType(PluginType::AudioSource);
     for (const auto& plugin : sources) {
@@ -398,14 +467,14 @@ void UnifiedPipelineView::refreshPluginLists()
         txSourceCombo_->addItem(name);
         rxSourceCombo_->addItem(name);
     }
-    
+
     auto processors = pluginManager_->getPluginsByType(PluginType::Processor);
     for (const auto& plugin : processors) {
         QString name = QString::fromStdString(plugin.info.name);
         txProcessorCombo_->addItem(name);
         rxProcessorCombo_->addItem(name);
     }
-    
+
     auto sinks = pluginManager_->getPluginsByType(PluginType::AudioSink);
     for (const auto& plugin : sinks) {
         QString name = QString::fromStdString(plugin.info.name);
@@ -421,14 +490,14 @@ void UnifiedPipelineView::onTXSourceChanged(int index)
         updateTXStatus();
         return;
     }
-    
+
     std::string pluginName = txSourceCombo_->currentText().toStdString();
     txSource_ = pluginManager_->getAudioSourcePlugin(pluginName);
-    
+
     if (txSource_) {
         pluginSidebar_->showPluginConfig(txSource_);
     }
-    
+
     updateTXStatus();
 }
 
@@ -439,14 +508,14 @@ void UnifiedPipelineView::onTXProcessorChanged(int index)
         updateTXStatus();
         return;
     }
-    
+
     std::string pluginName = txProcessorCombo_->currentText().toStdString();
     txProcessor_ = pluginManager_->getAudioProcessorPlugin(pluginName);
-    
+
     if (txProcessor_) {
         pluginSidebar_->showPluginConfig(txProcessor_);
     }
-    
+
     updateTXStatus();
 }
 
@@ -457,14 +526,14 @@ void UnifiedPipelineView::onTXSinkChanged(int index)
         updateTXStatus();
         return;
     }
-    
+
     std::string pluginName = txSinkCombo_->currentText().toStdString();
     txSink_ = pluginManager_->getAudioSinkPlugin(pluginName);
-    
+
     if (txSink_) {
         pluginSidebar_->showPluginConfig(txSink_);
     }
-    
+
     updateTXStatus();
 }
 
@@ -475,14 +544,14 @@ void UnifiedPipelineView::onRXSourceChanged(int index)
         updateRXStatus();
         return;
     }
-    
+
     std::string pluginName = rxSourceCombo_->currentText().toStdString();
     rxSource_ = pluginManager_->getAudioSourcePlugin(pluginName);
-    
+
     if (rxSource_) {
         pluginSidebar_->showPluginConfig(rxSource_);
     }
-    
+
     updateRXStatus();
 }
 
@@ -493,14 +562,14 @@ void UnifiedPipelineView::onRXProcessorChanged(int index)
         updateRXStatus();
         return;
     }
-    
+
     std::string pluginName = rxProcessorCombo_->currentText().toStdString();
     rxProcessor_ = pluginManager_->getAudioProcessorPlugin(pluginName);
-    
+
     if (rxProcessor_) {
         pluginSidebar_->showPluginConfig(rxProcessor_);
     }
-    
+
     updateRXStatus();
 }
 
@@ -511,14 +580,14 @@ void UnifiedPipelineView::onRXSinkChanged(int index)
         updateRXStatus();
         return;
     }
-    
+
     std::string pluginName = rxSinkCombo_->currentText().toStdString();
     rxSink_ = pluginManager_->getAudioSinkPlugin(pluginName);
-    
+
     if (rxSink_) {
         pluginSidebar_->showPluginConfig(rxSink_);
     }
-    
+
     updateRXStatus();
 }
 
@@ -526,7 +595,7 @@ void UnifiedPipelineView::updateTXStatus()
 {
     bool canStart = txSource_ && txSink_;
     bool isRunning = txPipeline_ && txPipeline_->isRunning();
-    
+
     if (isRunning) {
         txStatusLabel_->setText("🟢 Running");
         txStatusLabel_->setProperty("state", "running");
@@ -537,18 +606,18 @@ void UnifiedPipelineView::updateTXStatus()
         txStatusLabel_->setText("⚙️ Configure source and sink");
         txStatusLabel_->setProperty("state", "stopped");
     }
-    
+
     txStatusLabel_->style()->unpolish(txStatusLabel_);
     txStatusLabel_->style()->polish(txStatusLabel_);
-    
+
     // Update individual start button
     startTXButton_->setEnabled(canStart && !isRunning);
-    
+
     // Update Start Both button
     bool bothReady = (txSource_ && txSink_) && (rxSource_ && rxSink_);
-    bool bothRunning = (txPipeline_ && txPipeline_->isRunning()) && 
+    bool bothRunning = (txPipeline_ && txPipeline_->isRunning()) &&
                        (rxPipeline_ && rxPipeline_->isRunning());
-    
+
     startBothButton_->setEnabled(bothReady && !bothRunning);
     stopBothButton_->setEnabled(bothRunning);
 }
@@ -557,7 +626,7 @@ void UnifiedPipelineView::updateRXStatus()
 {
     bool canStart = rxSource_ && rxSink_;
     bool isRunning = rxPipeline_ && rxPipeline_->isRunning();
-    
+
     if (isRunning) {
         rxStatusLabel_->setText("🟢 Running");
         rxStatusLabel_->setProperty("state", "running");
@@ -568,18 +637,18 @@ void UnifiedPipelineView::updateRXStatus()
         rxStatusLabel_->setText("⚙️ Configure source and sink");
         rxStatusLabel_->setProperty("state", "stopped");
     }
-    
+
     rxStatusLabel_->style()->unpolish(rxStatusLabel_);
     rxStatusLabel_->style()->polish(rxStatusLabel_);
-    
+
     // Update individual start button
     startRXButton_->setEnabled(canStart && !isRunning);
-    
+
     // Update Start Both button
     bool bothReady = (txSource_ && txSink_) && (rxSource_ && rxSink_);
-    bool bothRunning = (txPipeline_ && txPipeline_->isRunning()) && 
+    bool bothRunning = (txPipeline_ && txPipeline_->isRunning()) &&
                        (rxPipeline_ && rxPipeline_->isRunning());
-    
+
     startBothButton_->setEnabled(bothReady && !bothRunning);
     stopBothButton_->setEnabled(bothRunning);
 }
@@ -587,21 +656,21 @@ void UnifiedPipelineView::updateRXStatus()
 void UnifiedPipelineView::onStartTXClicked()
 {
     if (!txPipeline_ || !txSource_ || !txSink_) return;
-    
+
     txPipeline_->setSource(txSource_);
     if (txProcessor_) txPipeline_->setProcessor(txProcessor_);
     txPipeline_->setSink(txSink_);
-    
+
     if (!txPipeline_->initialize()) {
         QMessageBox::critical(this, "TX Pipeline Error", "Failed to initialize TX pipeline");
         return;
     }
-    
+
     if (!txPipeline_->start()) {
         QMessageBox::critical(this, "TX Pipeline Error", "Failed to start TX pipeline");
         return;
     }
-    
+
     startTXButton_->setEnabled(false);
     stopTXButton_->setEnabled(true);
     updateTXStatus();
@@ -611,7 +680,7 @@ void UnifiedPipelineView::onStartTXClicked()
 void UnifiedPipelineView::onStopTXClicked()
 {
     if (!txPipeline_) return;
-    
+
     txPipeline_->stop();
     stopTXButton_->setEnabled(false);
     updateTXStatus();  // This will properly set startTXButton state
@@ -621,21 +690,21 @@ void UnifiedPipelineView::onStopTXClicked()
 void UnifiedPipelineView::onStartRXClicked()
 {
     if (!rxPipeline_ || !rxSource_ || !rxSink_) return;
-    
+
     rxPipeline_->setSource(rxSource_);
     if (rxProcessor_) rxPipeline_->setProcessor(rxProcessor_);
     rxPipeline_->setSink(rxSink_);
-    
+
     if (!rxPipeline_->initialize()) {
         QMessageBox::critical(this, "RX Pipeline Error", "Failed to initialize RX pipeline");
         return;
     }
-    
+
     if (!rxPipeline_->start()) {
         QMessageBox::critical(this, "RX Pipeline Error", "Failed to start RX pipeline");
         return;
     }
-    
+
     startRXButton_->setEnabled(false);
     stopRXButton_->setEnabled(true);
     updateRXStatus();
@@ -645,11 +714,69 @@ void UnifiedPipelineView::onStartRXClicked()
 void UnifiedPipelineView::onStopRXClicked()
 {
     if (!rxPipeline_) return;
-    
+
     rxPipeline_->stop();
     stopRXButton_->setEnabled(false);
     updateRXStatus();  // This will properly set startRXButton state
     emit rxPipelineStopped();
+}
+
+void UnifiedPipelineView::onBridgeModeClicked()
+{
+    // v2.1: Bridge Mode preset - one-click setup for stable Windows ⇄ AIOC bridge
+    // Step 1: Stop running pipelines if active
+    bool txWasRunning = false;
+    bool rxWasRunning = false;
+
+    if (txPipeline_ && txPipeline_->isRunning()) {
+        txWasRunning = true;
+        txPipeline_->stop();
+        std::cout << "[UI] Stopped TX pipeline for Bridge Mode reconfiguration" << std::endl;
+    }
+
+    if (rxPipeline_ && rxPipeline_->isRunning()) {
+        rxWasRunning = true;
+        rxPipeline_->stop();
+        std::cout << "[UI] Stopped RX pipeline for Bridge Mode reconfiguration" << std::endl;
+    }
+
+    // Step 2: Apply Bridge Mode timing preset to both pipelines
+    if (txPipeline_) {
+        txPipeline_->enableBridgeMode();
+    }
+
+    if (rxPipeline_) {
+        rxPipeline_->enableBridgeMode();
+    }
+
+    // Step 3: Configure processor slots to None (disabled in Bridge Mode)
+    txProcessorCombo_->setCurrentIndex(0);  // Assumes index 0 is "(None - Passthrough)"
+    txProcessorCombo_->setEnabled(false);   // Gray out
+
+    rxProcessorCombo_->setCurrentIndex(0);
+    rxProcessorCombo_->setEnabled(false);
+
+    // Step 4: Mark Bridge Mode as active
+    bridgeModeActive_ = true;
+
+    // Step 5: Show confirmation dialog
+    QString message =
+        "Bridge Mode configured successfully!\n\n"
+        "Settings applied:\n"
+        "• 48kHz forced on all devices\n"
+        "• Processors disabled (passthrough)\n"
+        "• Frame size: 1024 samples (~21ms)\n"
+        "• Backpressure: 10ms retry\n\n";
+
+    if (txWasRunning || rxWasRunning) {
+        message += "Pipelines were stopped. Click 'Start Both' to restart in Bridge Mode.";
+    } else {
+        message += "Configure your devices, then click 'Start Both' to begin.";
+    }
+
+    QMessageBox::information(this, "Bridge Mode Active", message);
+
+    std::cout << "[UI] Bridge Mode preset applied to both pipelines" << std::endl;
 }
 
 void UnifiedPipelineView::onStartBothClicked()
@@ -659,28 +786,28 @@ void UnifiedPipelineView::onStartBothClicked()
         txPipeline_->setSource(txSource_);
         if (txProcessor_) txPipeline_->setProcessor(txProcessor_);
         txPipeline_->setSink(txSink_);
-        
+
         if (!txPipeline_->initialize()) {
             QMessageBox::critical(this, "Pipeline Error", "Failed to initialize TX pipeline");
             return;
         }
-        
+
         if (!txPipeline_->start()) {
             QMessageBox::critical(this, "Pipeline Error", "Failed to start TX pipeline");
             return;
         }
-        
+
         startTXButton_->setEnabled(false);
         stopTXButton_->setEnabled(true);
         emit txPipelineStarted();
     }
-    
+
     // Start RX pipeline
     if (rxPipeline_ && rxSource_ && rxSink_) {
         rxPipeline_->setSource(rxSource_);
         if (rxProcessor_) rxPipeline_->setProcessor(rxProcessor_);
         rxPipeline_->setSink(rxSink_);
-        
+
         if (!rxPipeline_->initialize()) {
             QMessageBox::critical(this, "Pipeline Error", "Failed to initialize RX pipeline");
             // Stop TX if RX fails
@@ -691,7 +818,7 @@ void UnifiedPipelineView::onStartBothClicked()
             }
             return;
         }
-        
+
         if (!rxPipeline_->start()) {
             QMessageBox::critical(this, "Pipeline Error", "Failed to start RX pipeline");
             // Stop TX if RX fails
@@ -702,12 +829,12 @@ void UnifiedPipelineView::onStartBothClicked()
             }
             return;
         }
-        
+
         startRXButton_->setEnabled(false);
         stopRXButton_->setEnabled(true);
         emit rxPipelineStarted();
     }
-    
+
     updateTXStatus();
     updateRXStatus();
 }
@@ -719,13 +846,13 @@ void UnifiedPipelineView::onStopBothClicked()
         stopTXButton_->setEnabled(false);
         emit txPipelineStopped();
     }
-    
+
     if (rxPipeline_) {
         rxPipeline_->stop();
         stopRXButton_->setEnabled(false);
         emit rxPipelineStopped();
     }
-    
+
     updateTXStatus();  // This will properly set startTXButton state
     updateRXStatus();  // This will properly set startRXButton state
 }
@@ -736,7 +863,7 @@ void UnifiedPipelineView::onPTTPressed()
     pttButton_->setProperty("active", true);
     pttButton_->style()->unpolish(pttButton_);
     pttButton_->style()->polish(pttButton_);
-    
+
     // If TX source plugin supports PTT, trigger it
     if (txSource_) {
         std::string supportsPTT = txSource_->getParameter("supports_ptt");
@@ -757,7 +884,7 @@ void UnifiedPipelineView::onPTTReleased()
     pttButton_->setProperty("active", false);
     pttButton_->style()->unpolish(pttButton_);
     pttButton_->style()->polish(pttButton_);
-    
+
     // If TX source plugin supports PTT, release it
     if (txSource_) {
         std::string supportsPTT = txSource_->getParameter("supports_ptt");
@@ -778,40 +905,108 @@ void UnifiedPipelineView::updateMetrics()
     if (txPipeline_ && txPipeline_->isRunning()) {
         double txLatency = txPipeline_->getLatency();
         float txCPU = txPipeline_->getCPULoad();
-        
+
         txLatencyLabel_->setText(QString::number(txLatency, 'f', 1) + " ms");
         txCPULabel_->setText(QString::number(static_cast<int>(txCPU)) + "%");
-        
+
         float txPeakL = 0.0f;
         float txPeakR = 0.0f;
         txPipeline_->getPeakLevels(txPeakL, txPeakR);
         txInputMeterL_->setValue(static_cast<int>(txPeakL * 100.0f));
         txInputMeterR_->setValue(static_cast<int>(txPeakR * 100.0f));
+
+        // v2.1: Update diagnostics
+        const double drift = txPipeline_->getCurrentDriftMs();
+        const double maxDrift = txPipeline_->getMaxDriftMs();
+        txDriftLabel_->setText(QString("%1 ms (max: %2 ms)")
+            .arg(drift, 0, 'f', 1)
+            .arg(maxDrift, 0, 'f', 1));
+
+        txReadFailsLabel_->setText(QString::number(txPipeline_->getReadFailures()));
+        txWriteFailsLabel_->setText(QString::number(txPipeline_->getWriteFailures()));
+
+        // Update health indicator
+        auto health = txPipeline_->getHealthStatus();
+        switch (health) {
+            case ProcessingPipeline::HealthStatus::OK:
+                txHealthLabel_->setText("🟢 OK");
+                txHealthLabel_->setStyleSheet("color: green; font-weight: bold;");
+                break;
+            case ProcessingPipeline::HealthStatus::Degraded:
+                txHealthLabel_->setText("🟡 Degraded");
+                txHealthLabel_->setStyleSheet("color: orange; font-weight: bold;");
+                break;
+            case ProcessingPipeline::HealthStatus::Failing:
+                txHealthLabel_->setText("🔴 Failing");
+                txHealthLabel_->setStyleSheet("color: red; font-weight: bold;");
+                break;
+        }
     } else {
         txLatencyLabel_->setText("--");
         txCPULabel_->setText("--");
         txInputMeterL_->setValue(0);
         txInputMeterR_->setValue(0);
+
+        // v2.1: Reset diagnostics
+        txHealthLabel_->setText("⚙️ Not running");
+        txHealthLabel_->setStyleSheet("font-weight: bold;");
+        txDriftLabel_->setText("—");
+        txReadFailsLabel_->setText("—");
+        txWriteFailsLabel_->setText("—");
     }
-    
+
     // RX pipeline metrics
     if (rxPipeline_ && rxPipeline_->isRunning()) {
         double rxLatency = rxPipeline_->getLatency();
         float rxCPU = rxPipeline_->getCPULoad();
-        
+
         rxLatencyLabel_->setText(QString::number(rxLatency, 'f', 1) + " ms");
         rxCPULabel_->setText(QString::number(static_cast<int>(rxCPU)) + "%");
-        
+
         float rxPeakL = 0.0f;
         float rxPeakR = 0.0f;
         rxPipeline_->getPeakLevels(rxPeakL, rxPeakR);
         rxOutputMeterL_->setValue(static_cast<int>(rxPeakL * 100.0f));
         rxOutputMeterR_->setValue(static_cast<int>(rxPeakR * 100.0f));
+
+        // v2.1: Update diagnostics
+        const double drift = rxPipeline_->getCurrentDriftMs();
+        const double maxDrift = rxPipeline_->getMaxDriftMs();
+        rxDriftLabel_->setText(QString("%1 ms (max: %2 ms)")
+            .arg(drift, 0, 'f', 1)
+            .arg(maxDrift, 0, 'f', 1));
+
+        rxReadFailsLabel_->setText(QString::number(rxPipeline_->getReadFailures()));
+        rxWriteFailsLabel_->setText(QString::number(rxPipeline_->getWriteFailures()));
+
+        // Update health indicator
+        auto health = rxPipeline_->getHealthStatus();
+        switch (health) {
+            case ProcessingPipeline::HealthStatus::OK:
+                rxHealthLabel_->setText("🟢 OK");
+                rxHealthLabel_->setStyleSheet("color: green; font-weight: bold;");
+                break;
+            case ProcessingPipeline::HealthStatus::Degraded:
+                rxHealthLabel_->setText("🟡 Degraded");
+                rxHealthLabel_->setStyleSheet("color: orange; font-weight: bold;");
+                break;
+            case ProcessingPipeline::HealthStatus::Failing:
+                rxHealthLabel_->setText("🔴 Failing");
+                rxHealthLabel_->setStyleSheet("color: red; font-weight: bold;");
+                break;
+        }
     } else {
         rxLatencyLabel_->setText("--");
         rxCPULabel_->setText("--");
         rxOutputMeterL_->setValue(0);
         rxOutputMeterR_->setValue(0);
+
+        // v2.1: Reset diagnostics
+        rxHealthLabel_->setText("⚙️ Not running");
+        rxHealthLabel_->setStyleSheet("font-weight: bold;");
+        rxDriftLabel_->setText("—");
+        rxReadFailsLabel_->setText("—");
+        rxWriteFailsLabel_->setText("—");
     }
 }
 

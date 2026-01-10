@@ -73,6 +73,74 @@ This will:
 
 Output: `readytoship\` directory with everything needed to run NDA
 
+### v2.1: Automated Soak Testing
+
+#### Full 20-Minute Acceptance Test
+
+Run the official soak test (required for release):
+
+```batch
+scripts\soak_test.bat
+```
+
+This will:
+- Auto-start both TX and RX pipelines
+- Run for 20 minutes (1200 seconds)
+- Auto-stop and print diagnostics
+- Validate against acceptance criteria:
+  - No dropouts (0 dropped samples)
+  - Max drift <50ms
+  - Read/Write failures <10
+  - Health status: OK
+
+**Output:** `soak_test_log.txt` with full diagnostics
+
+#### Quick 5-Minute Test (Development)
+
+For faster iteration during development:
+
+```batch
+scripts\soak_test_quick.bat
+```
+
+Same validation, but only runs for 5 minutes.
+
+#### Custom Duration
+
+Run with custom duration:
+
+```batch
+scripts\soak_test.bat 600     # 10 minutes
+scripts\soak_test.bat 3600    # 1 hour
+```
+
+#### Manual Soak Test
+
+Run NDA directly with duration argument:
+
+```batch
+build\Release\NDA.exe --duration 1200
+```
+
+#### Result Validation
+
+Manually validate a log file:
+
+```batch
+python scripts\validate_soak_test.py soak_test_log.txt
+```
+
+This provides detailed analysis of:
+- Processed samples
+- Dropped samples
+- Read/Write failures
+- Drift metrics
+- Health status
+
+**Exit codes:**
+- `0` = All tests passed
+- `1` = One or more failures detected
+
 ### Troubleshooting
 
 #### "CMake configuration failed"
@@ -148,9 +216,11 @@ cmake --build build -j$(nproc)
 
 ### Enable/Disable Python Support
 ```batch
--DNDA_ENABLE_PYTHON=ON   # Enable Python plugins (default)
--DNDA_ENABLE_PYTHON=OFF  # Disable Python plugins
+-DNDA_ENABLE_PYTHON=OFF  # Disable Python plugins (default for v2.1 release)
+-DNDA_ENABLE_PYTHON=ON   # Enable Python plugins (development only)
 ```
+
+**Note:** Python support is disabled by default in v2.1 for release stability. Use `build_windows_dev.bat` for development builds with Python enabled.
 
 ### Specify Python Installation
 ```batch
@@ -178,9 +248,13 @@ For a fresh Windows setup:
 scripts/
 ├── README.md                   # This file
 ├── setup_windows.bat           # Dependency installer (Windows)
-├── build_windows.bat           # Build script - VS generator
+├── build_windows.bat           # Build script - VS generator (Python OFF)
+├── build_windows_dev.bat       # Build script - VS generator (Python ON)
 ├── build_windows_ninja.bat     # Build script - Ninja generator
 ├── deploy_windows.bat          # Deployment script (Windows)
+├── soak_test.bat               # v2.1: 20-minute stability test
+├── soak_test_quick.bat         # v2.1: 5-minute quick test
+├── validate_soak_test.py       # v2.1: Test result validator
 ├── build_ubuntu.sh             # One-shot build (Linux)
 ├── dev_ubuntu.sh               # Dev loop script (Linux)
 └── deploy.py                   # Deployment helper (cross-platform)

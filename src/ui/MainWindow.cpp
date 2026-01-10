@@ -1,12 +1,13 @@
 #include "ui/MainWindow.h"
 #include "ui/UnifiedPipelineView.h"
-#include <QMenuBar>
-#include <QMenu>
 #include <QAction>
-#include <QStatusBar>
 #include <QCoreApplication>
-#include <QDir>
 #include <QDebug>
+#include <QDir>
+#include <QMenu>
+#include <QMenuBar>
+#include <QStatusBar>
+#include <iostream>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -16,7 +17,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     // Create core components
     pluginManager_ = std::make_shared<nda::PluginManager>();
-    
+
     // v2.0: Dual pipeline architecture (TX + RX)
     txPipeline_ = std::make_shared<nda::ProcessingPipeline>();
     rxPipeline_ = std::make_shared<nda::ProcessingPipeline>();
@@ -37,9 +38,9 @@ void MainWindow::setupUI()
     unifiedView_->setPluginManager(pluginManager_);
     unifiedView_->setTXPipeline(txPipeline_);
     unifiedView_->setRXPipeline(rxPipeline_);
-    
+
     setCentralWidget(unifiedView_);
-    
+
     // Connect signals
     connect(unifiedView_, &nda::UnifiedPipelineView::txPipelineStarted,
             this, &MainWindow::onTXPipelineStarted);
@@ -102,17 +103,17 @@ void MainWindow::autoLoadPlugins()
 #ifndef NDA_ENABLE_PYTHON
     qDebug() << "Python plugin support is disabled in this build; .py plugins will not be loaded";
 #endif
-    
+
     // Auto-discover plugins from standard directories
     const QString appDir = QCoreApplication::applicationDirPath();
-    
+
     // Python plugins
     QStringList pythonCandidates = {
         appDir + "/plugins_py",
         appDir + "/../plugins_py",
         appDir + "/../../plugins_py"
     };
-    
+
     // C++ plugins
     QStringList cppCandidates = {
         appDir + "/plugins",
@@ -121,9 +122,10 @@ void MainWindow::autoLoadPlugins()
         appDir + "/../build/plugins",
         appDir + "/../../build/plugins"
     };
-    
+
     int loadedCount = 0;
-    
+
+#ifdef NDA_ENABLE_PYTHON
     // Load Python plugins
     for (const auto& dir : pythonCandidates) {
         if (QDir(dir).exists()) {
@@ -135,7 +137,8 @@ void MainWindow::autoLoadPlugins()
             }
         }
     }
-    
+#endif
+
     // Load C++ plugins
     for (const auto& dir : cppCandidates) {
         if (QDir(dir).exists()) {
@@ -147,11 +150,92 @@ void MainWindow::autoLoadPlugins()
             }
         }
     }
-    
+
     qDebug() << "Auto-loaded" << loadedCount << "plugins on startup";
-    
+
     // Notify unified view to refresh plugin lists
     if (unifiedView_) {
         unifiedView_->refreshPluginLists();
     }
+}
+
+// v2.1: Soak test support methods
+
+void MainWindow::startBothPipelines()
+{
+    if (unifiedView_) {
+        // Trigger the Start Both button click programmatically
+        QMetaObject::invokeMethod(unifiedView_, "onStartBothClicked");
+    }
+}
+
+void MainWindow::stopBothPipelines()
+{
+    if (unifiedView_) {
+        // Trigger the Stop Both button click programmatically
+        QMetaObject::invokeMethod(unifiedView_, "onStopBothClicked");
+    }
+}
+
+void MainWindow::printSoakTestReport()
+{
+    std::cout << "\n========================================\n";
+    std::cout << "       SOAK TEST REPORT\n";
+    std::cout << "========================================\n\n";
+
+    if (txPipeline_) {
+        std::cout << "TX Pipeline:\n";
+        std::cout << "  Status: " << (txPipeline_->isRunning() ? "Running" : "Stopped") << "\n";
+        std::cout << "  Processed: " << txPipeline_->getProcessedSamples() << " samples\n";
+        std::cout << "  Dropped: " << txPipeline_->getDroppedSamples() << " samples\n";
+        std::cout << "  Read Failures: " << txPipeline_->getReadFailures() << "\n";
+        std::cout << "  Write Failures: " << txPipeline_->getWriteFailures() << "\n";
+        std::cout << "  Current Drift: " << txPipeline_->getCurrentDriftMs() << " ms\n";
+        std::cout << "  Max Drift: " << txPipeline_->getMaxDriftMs() << " ms\n";
+
+        auto txHealth = txPipeline_->getHealthStatus();
+        std::cout << "  Health: ";
+        switch (txHealth) {
+            case nda::ProcessingPipeline::HealthStatus::OK:
+                std::cout << "OK (0)\n";
+                break;
+            case nda::ProcessingPipeline::HealthStatus::Degraded:
+                std::cout << "Degraded (1)\n";
+                break;
+            case nda::ProcessingPipeline::HealthStatus::Failing:
+                std::cout << "Failing (2)\n";
+                break;
+        }
+        std::cout << "\n";
+    }
+
+    if (rxPipeline_) {
+        std::cout << "RX Pipeline:\n";
+        std::cout << "  Status: " << (rxPipeline_->isRunning() ? "Running" : "Stopped") << "\n";
+        std::cout << "  Processed: " << rxPipeline_->getProcessedSamples() << " samples\n";
+        std::cout << "  Dropped: " << rxPipeline_->getDroppedSamples() << " samples\n";
+        std::cout << "  Read Failures: " << rxPipeline_->getReadFailures() << "\n";
+        std::cout << "  Write Failures: " << rxPipeline_->getWriteFailures() << "\n";
+        std::cout << "  Current Drift: " << rxPipeline_->getCurrentDriftMs() << " ms\n";
+        std::cout << "  Max Drift: " << rxPipeline_->getMaxDriftMs() << " ms\n";
+
+        auto rxHealth = rxPipeline_->getHealthStatus();
+        std::cout << "  Health: ";
+        switch (rxHealth) {
+            case nda::ProcessingPipeline::HealthStatus::OK:
+                std::cout << "OK (0)\n";
+                break;
+            case nda::ProcessingPipeline::HealthStatus::Degraded:
+                std::cout << "Degraded (1)\n";
+                break;
+            case nda::ProcessingPipeline::HealthStatus::Failing:
+                std::cout << "Failing (2)\n";
+                break;
+        }
+        std::cout << "\n";
+    }
+
+    std::cout << "========================================\n";
+    std::cout << "       END OF REPORT\n";
+    std::cout << "========================================\n\n";
 }
