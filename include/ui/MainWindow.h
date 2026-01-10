@@ -19,8 +19,13 @@ class MainWindow : public QMainWindow
 public:
     explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
-    
+
     void autoLoadPlugins();  // v2.0: Auto-load plugins on startup
+
+    // v2.1: Soak test support
+    void startBothPipelines();
+    void stopBothPipelines();
+    void printSoakTestReport();
 
 private slots:
     void onTXPipelineStarted();

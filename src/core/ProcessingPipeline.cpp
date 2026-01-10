@@ -348,7 +348,7 @@ struct ProcessingPipeline::ProfilingData
     ProcessingPipeline::ProcessingPipeline()
     : isRunning_(false)
     , processingThread_(nullptr)
-    , frameCount_(512)
+    , frameCount_(1024)  // v2.1 Bridge Mode: Increased from 512 for stability (fewer interrupts)
     , processedSamples_(0)
     , targetSampleRate_(48000)  // Default: 48kHz internal processing
     , droppedSamples_(0)
@@ -356,9 +356,13 @@ struct ProcessingPipeline::ProfilingData
     , backpressureWaits_(0)
     , consecutiveFailures_(0)
     , processorFailures_(0)
+    , currentDriftMs_(0.0)
+    , maxDriftMs_(0.0)
+    , readFailures_(0)
+    , writeFailures_(0)
     , backpressureMode_(BackpressureMode::WaitAndRetry)
-    , backpressureSleepMs_(5)
-    , driftResyncMs_(250)
+    , backpressureSleepMs_(10)  // v2.1 Bridge Mode: Increased from 5ms for more tolerance
+    , driftResyncMs_(0)  // v2.1: DISABLED (was 250, was dropping audio)
     , winTimePeriodMs_(0)
     , winTimePeriodActive_(false)
     , longFrameWarnMs_(0)
@@ -502,6 +506,60 @@ bool ProcessingPipeline::initialize()
         return false;
     }
 
+    // v2.1 Stabilization: Force 48kHz on all devices (Bridge Mode requirement)
+    const bool force48kHz = true;  // TODO: Make this configurable per preset
+
+    if (force48kHz) {
+        // Try to force source to 48kHz
+        if (source_->getSampleRate() != 48000) {
+            std::cout << "[Pipeline] Forcing source to 48kHz (was "
+                      << source_->getSampleRate() << "Hz)..." << std::endl;
+
+            source_->setSampleRate(48000);
+
+            // Verify it worked
+            if (source_->getSampleRate() != 48000) {
+                const std::string error =
+                    std::string("[Pipeline] CRITICAL: Source '") + source_->getInfo().name +
+                    "' cannot operate at 48kHz (only supports " +
+                    std::to_string(source_->getSampleRate()) +
+                    "Hz). Bridge Mode requires 48kHz-compatible devices.\n" +
+                    "  Solution: Choose a different audio device or disable 48kHz forcing.";
+
+                std::cerr << error << std::endl;
+                return false;  // Fail initialization
+            }
+
+            std::cout << "[Pipeline] Source successfully set to 48kHz" << std::endl;
+        }
+
+        // Try to force sink to 48kHz
+        if (sink_->getSampleRate() != 48000) {
+            std::cout << "[Pipeline] Forcing sink to 48kHz (was "
+                      << sink_->getSampleRate() << "Hz)..." << std::endl;
+
+            sink_->setSampleRate(48000);
+
+            // Verify it worked
+            if (sink_->getSampleRate() != 48000) {
+                const std::string error =
+                    std::string("[Pipeline] CRITICAL: Sink '") + sink_->getInfo().name +
+                    "' cannot operate at 48kHz (only supports " +
+                    std::to_string(sink_->getSampleRate()) +
+                    "Hz). Bridge Mode requires 48kHz-compatible devices.\n" +
+                    "  Solution: Choose a different audio device or disable 48kHz forcing.";
+
+                std::cerr << error << std::endl;
+                return false;  // Fail initialization
+            }
+
+            std::cout << "[Pipeline] Sink successfully set to 48kHz" << std::endl;
+        }
+
+        // Update target rate to match (should already be 48000)
+        targetSampleRate_ = 48000;
+    }
+
     // Initialize work buffer
     const int sourceRate = source_->getSampleRate();
     const int sinkRate = sink_->getSampleRate();
@@ -544,16 +602,21 @@ bool ProcessingPipeline::initialize()
     workBuffer_.resize(channels, frameCount_);
 
     // Auto-configure resamplers if sample rates mismatch (v2.0 auto-fix)
-    if (sourceRate != targetSampleRate_) {
-        std::cout << "[Pipeline] Auto-resampling enabled: " << sourceRate 
-                  << "Hz → " << targetSampleRate_ << "Hz (source)" << std::endl;
-        sourceResampler_.initialize(sourceRate, targetSampleRate_, channels, ResampleQuality::Simple);
-    }
-    
-    if (sinkRate != targetSampleRate_) {
-        std::cout << "[Pipeline] Auto-resampling enabled: " << targetSampleRate_ 
-                  << "Hz → " << sinkRate << "Hz (sink)" << std::endl;
-        sinkResampler_.initialize(targetSampleRate_, sinkRate, channels, ResampleQuality::Simple);
+    if (sourceRate == targetSampleRate_ && sinkRate == targetSampleRate_) {
+        std::cout << "[Pipeline] Bridge Mode: All devices at 48kHz - resampling DISABLED" << std::endl;
+        // sourceResampler_ and sinkResampler_ remain inactive
+    } else {
+        if (sourceRate != targetSampleRate_) {
+            std::cout << "[Pipeline] Auto-resampling enabled: " << sourceRate
+                      << "Hz → " << targetSampleRate_ << "Hz (source)" << std::endl;
+            sourceResampler_.initialize(sourceRate, targetSampleRate_, channels, ResampleQuality::Simple);
+        }
+
+        if (sinkRate != targetSampleRate_) {
+            std::cout << "[Pipeline] Auto-resampling enabled: " << targetSampleRate_
+                      << "Hz → " << sinkRate << "Hz (sink)" << std::endl;
+            sinkResampler_.initialize(targetSampleRate_, sinkRate, channels, ResampleQuality::Simple);
+        }
     }
 
     std::cout << "[Pipeline] Initialization complete - " << channels << " channels @ "
@@ -695,6 +758,33 @@ void ProcessingPipeline::shutdown()
     if (sink_) sink_->shutdown();
 }
 
+void ProcessingPipeline::enableBridgeMode()
+{
+    std::cout << "[Pipeline] Enabling Bridge Mode timing preset..." << std::endl;
+
+    // Conservative frame size for stability (fewer interrupts, more buffering)
+    frameCount_ = 1024;  // At 48kHz: ~21.3ms latency per frame
+
+    // Generous backpressure handling (more tolerance for Windows scheduling jitter)
+    backpressureSleepMs_ = 10;
+
+    // No drift resync (was dropping audio silently)
+    driftResyncMs_ = 0;
+
+    // Windows timer period (already configured in constructor)
+    // winTimePeriodMs_ = 1;  // Keep current value
+
+    // Force 48kHz target rate
+    targetSampleRate_ = 48000;
+
+    std::cout << "[Pipeline] Bridge Mode timing configured:"
+              << " frame=" << frameCount_ << " samples (~"
+              << (static_cast<double>(frameCount_) / 48000.0 * 1000.0) << "ms)"
+              << ", backpressure=" << backpressureSleepMs_ << "ms"
+              << ", target=" << targetSampleRate_ << "Hz"
+              << std::endl;
+}
+
 double ProcessingPipeline::getLatency() const
 {
     double latency = 0.0;
@@ -814,6 +904,45 @@ double ProcessingPipeline::getRealTimeRatio() const
     return static_cast<double>(audioTime) / wallTime;
 }
 
+// v2.1: Drift and timing metrics
+double ProcessingPipeline::getCurrentDriftMs() const
+{
+    std::lock_guard<std::mutex> lock(metricsMutex_);
+    return currentDriftMs_;
+}
+
+double ProcessingPipeline::getMaxDriftMs() const
+{
+    std::lock_guard<std::mutex> lock(metricsMutex_);
+    return maxDriftMs_;
+}
+
+// v2.1: Underrun/overrun counters
+uint64_t ProcessingPipeline::getReadFailures() const
+{
+    return readFailures_.load();
+}
+
+uint64_t ProcessingPipeline::getWriteFailures() const
+{
+    return writeFailures_.load();
+}
+
+// v2.1: Health status indicator
+ProcessingPipeline::HealthStatus ProcessingPipeline::getHealthStatus() const
+{
+    const double drift = getCurrentDriftMs();
+    const uint64_t failures = getReadFailures() + getWriteFailures();
+
+    if (drift > 50.0 || failures > 100) {
+        return HealthStatus::Failing;
+    } else if (drift > 10.0 || failures > 10) {
+        return HealthStatus::Degraded;
+    } else {
+        return HealthStatus::OK;
+    }
+}
+
 void ProcessingPipeline::processingThread()
 {
     std::cout << "[Pipeline] Processing thread started with real-time pacing" << std::endl;
@@ -835,6 +964,12 @@ void ProcessingPipeline::processingThread()
 
         if (now < targetTime) {
             // We're ahead of schedule - sleep until target time
+            // v2.1: Update drift metrics (no drift when ahead)
+            {
+                std::lock_guard<std::mutex> lock(metricsMutex_);
+                currentDriftMs_ = 0.0;
+            }
+
             auto sleepStart = now;
             std::this_thread::sleep_until(targetTime);
             const auto afterSleep = std::chrono::steady_clock::now();
@@ -848,6 +983,16 @@ void ProcessingPipeline::processingThread()
         } else {
             // We're behind schedule - track drift
             auto drift = std::chrono::duration_cast<std::chrono::milliseconds>(now - targetTime);
+
+            // v2.1: Update drift metrics
+            {
+                std::lock_guard<std::mutex> lock(metricsMutex_);
+                currentDriftMs_ = static_cast<double>(drift.count());
+                if (currentDriftMs_ > maxDriftMs_) {
+                    maxDriftMs_ = currentDriftMs_;
+                }
+            }
+
             if (profiling_) {
                 const int64_t driftUs = static_cast<int64_t>(toMicros(now - targetTime));
                 profiling_->driftSamples++;
@@ -858,7 +1003,7 @@ void ProcessingPipeline::processingThread()
                 // More than 50ms behind - log warning
                 driftWarnings_++;
                 if (driftWarnings_ % 100 == 0) {
-                    std::cerr << "[Pipeline] WARNING: " << drift.count() 
+                    std::cerr << "[Pipeline] WARNING: " << drift.count()
                               << "ms behind schedule (drift #" << driftWarnings_ << ")" << std::endl;
                 }
             }
@@ -994,6 +1139,7 @@ void ProcessingPipeline::processAudioFrame()
 
     if (!readOk) {
         consecutiveFailures_++;
+        readFailures_++;  // v2.1: Track total read failures
         readUs = toMicros(std::chrono::steady_clock::now() - readStart);
         if (profiling_) {
             profiling_->readUs.add(readUs);
@@ -1098,10 +1244,10 @@ void ProcessingPipeline::processAudioFrame()
     // 5/6. Backpressure + write (ZERO-LOSS MODE)
     // v2.1: Never drop audio - wait for sink with latency budget enforcement
     bool writeOk = false;
-    const int maxLatencyMs = 50;  // Fail-fast if we exceed latency budget
+    const int maxLatencyMs = 100;  // v2.1 Bridge Mode: Increased from 50ms for more tolerance
     auto backpressureStart = std::chrono::steady_clock::now();
     int retryAttempts = 0;
-    const int maxRetries = 20;  // At 5ms sleep, this is ~100ms total
+    const int maxRetries = 20;  // At 10ms sleep, this is ~200ms total
 
     while (!writeOk && retryAttempts < maxRetries) {
         // Check available space (with exception safety)
@@ -1184,6 +1330,8 @@ void ProcessingPipeline::processAudioFrame()
 
     // If we exhausted retries without success, fail pipeline
     if (!writeOk) {
+        writeFailures_++;  // v2.1: Track total write failures
+        droppedSamples_ += frameCount;  // v2.1: Count dropped samples
         std::cerr << "[Pipeline] CRITICAL: Sink write failed after " << maxRetries
                   << " retries. Failing pipeline." << std::endl;
         isRunning_.store(false);
