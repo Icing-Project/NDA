@@ -45,7 +45,9 @@ public:
           captureClient_(nullptr),
 #endif
           comInitialized_(false),
-          comOwned_(false)
+          comOwned_(false),
+          // v2.2: Event-driven support
+          dataReadyThreshold_(512)  // Default: notify when 512 frames available
     {
     }
 
@@ -111,56 +113,73 @@ public:
             return false;
         }
 
-        // 6. Try to request our preferred format (48kHz, stereo, float32)
-        //    But keep original format as backup
-        WAVEFORMATEX requestedFormat = *mixFormat;
-        requestedFormat.nSamplesPerSec = sampleRate_;
-        requestedFormat.nChannels = channels_;
-        requestedFormat.wBitsPerSample = 32;  // float32
-        requestedFormat.nBlockAlign = channels_ * 4;
-        requestedFormat.nAvgBytesPerSec = sampleRate_ * channels_ * 4;
+        // 6. Log device's native format for debugging
+        std::cerr << "[WindowsMicrophone] Device mix format: " << mixFormat->nSamplesPerSec << "Hz, "
+                  << mixFormat->nChannels << "ch, " << mixFormat->wBitsPerSample << "bit\n";
 
-        // For WAVEFORMATEXTENSIBLE (most modern devices)
+        // 7. Prepare format for WASAPI
+        //    CRITICAL: In shared mode, we MUST use the device's native sample rate
+        //    Windows audio engine handles resampling, but we need to match the device
         bool useExtended = (mixFormat->wFormatTag == WAVE_FORMAT_EXTENSIBLE);
+
+        // In shared mode, Windows requires using the device's mix format sample rate
+        int deviceSampleRate = mixFormat->nSamplesPerSec;
+
         if (useExtended) {
+            // Modify the extended format in place for float32 output
             WAVEFORMATEXTENSIBLE* formatEx = reinterpret_cast<WAVEFORMATEXTENSIBLE*>(mixFormat);
             formatEx->SubFormat = KSDATAFORMAT_SUBTYPE_IEEE_FLOAT;
-        } else {
-            requestedFormat.wFormatTag = WAVE_FORMAT_IEEE_FLOAT;
+            formatEx->Format.wBitsPerSample = 32;
+            formatEx->Format.nBlockAlign = formatEx->Format.nChannels * 4;
+            formatEx->Format.nAvgBytesPerSec = formatEx->Format.nSamplesPerSec * formatEx->Format.nBlockAlign;
+            formatEx->Samples.wValidBitsPerSample = 32;
         }
 
-        // 7. Calculate buffer duration
-        //    200ms = more stable buffer for polling mode (reduces underruns)
-        int bufferFrames = (sampleRate_ * 200) / 1000;  // 200ms
+        // Update our internal state to match device's actual sample rate
+        // This is CRITICAL - pipeline must know the true rate for correct pacing
+        if (deviceSampleRate != sampleRate_) {
+            std::cerr << "[WindowsMicrophone] Adapting to device sample rate: "
+                      << sampleRate_ << "Hz -> " << deviceSampleRate << "Hz\n";
+            sampleRate_ = deviceSampleRate;
+        }
+        channels_ = mixFormat->nChannels;
+
+        // 8. Calculate buffer duration at device's actual sample rate
+        int bufferFrames = (sampleRate_ * 200) / 1000;  // 200ms at device rate
         REFERENCE_TIME bufferDuration = (REFERENCE_TIME)((10000000.0 * bufferFrames) / sampleRate_);
 
-        // 8. Initialize audio client in SHARED mode with POLLING (not event-driven)
-        //    Shared mode: multiple apps can use device, Windows handles mixing
-        //    No event callback: simpler polling mode, more reliable for our sync API
+        // 9. Initialize audio client in SHARED mode
+        //    In shared mode, we MUST use the device's mix format (Windows requirement)
         hr = audioClient_->Initialize(
             AUDCLNT_SHAREMODE_SHARED,           // Shared mode (not exclusive)
             0,                                   // No special flags - polling mode
             bufferDuration,                      // Buffer size (200ms)
             0,                                   // Must be 0 in shared mode
-            useExtended ? mixFormat : &requestedFormat,
+            mixFormat,                           // MUST use device format in shared mode
             nullptr                              // No session GUID
         );
 
         if (FAILED(hr)) {
-            // Fallback: Use device's original mix format (always works)
-            std::cerr << "[WindowsMicrophone] Custom format rejected, using device format\n";
+            // Fallback: retry with unmodified format
+            std::cerr << "[WindowsMicrophone] Initialize failed: 0x" << std::hex << hr << std::dec
+                      << ", retrying with device defaults\n";
 
-            // Update our config to match device
+            // Re-query device format (ours might have been modified)
+            CoTaskMemFree(mixFormat);
+            hr = audioClient_->GetMixFormat(&mixFormat);
+            if (FAILED(hr)) {
+                std::cerr << "[WindowsMicrophone] GetMixFormat retry failed\n";
+                return false;
+            }
+
             sampleRate_ = mixFormat->nSamplesPerSec;
             channels_ = mixFormat->nChannels;
-
-            // Recalculate buffer duration for device rate
-            bufferFrames = (sampleRate_ * 200) / 1000;  // 200ms at device rate
+            bufferFrames = (sampleRate_ * 200) / 1000;
             bufferDuration = (REFERENCE_TIME)((10000000.0 * bufferFrames) / sampleRate_);
 
             hr = audioClient_->Initialize(
                 AUDCLNT_SHAREMODE_SHARED,
-                0,  // No event callback
+                0,
                 bufferDuration,
                 0,
                 mixFormat,
@@ -559,6 +578,31 @@ public:
         }
     }
 
+    // ===== v2.2: Event-Driven Pipeline Support =====
+
+    bool supportsAsyncMode() const override {
+        // This plugin uses ring buffer + background thread, supports async mode
+        return true;
+    }
+
+    void setDataReadyCallback(DataReadyCallback callback) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        dataReadyCallback_ = callback;
+
+        if (callback) {
+            std::cerr << "[WindowsMicrophone] v2.2: Data-ready callback registered "
+                      << "(threshold: " << dataReadyThreshold_ << " frames)\n";
+        } else {
+            std::cerr << "[WindowsMicrophone] v2.2: Data-ready callback cleared\n";
+        }
+    }
+
+    int getDataReadyThreshold() const override {
+        return dataReadyThreshold_;
+    }
+
+    // ===== End Event-Driven Pipeline Support =====
+
 private:
     mutable std::mutex mutex_;
     PluginState state_;
@@ -604,7 +648,15 @@ private:
     /// Temporary conversion buffer (reused in capture thread, planar format)
     std::vector<std::vector<float>> tempBuffer_;
 
-    // ===== End Ring Buffer Integration =====
+    // ===== v2.2: Event-Driven Pipeline Support =====
+
+    /// Callback to notify pipeline when data is ready
+    DataReadyCallback dataReadyCallback_;
+
+    /// Threshold for triggering data-ready callback (frames)
+    int dataReadyThreshold_;
+
+    // ===== End Ring Buffer / Event-Driven Integration =====
 
     /**
      * @brief Capture thread function - polls WASAPI and feeds ring buffer.
@@ -720,6 +772,14 @@ private:
 
             packetsProcessed++;
             totalFramesCaptured += framesWritten;
+
+            // v2.2: Notify pipeline when enough data is available
+            int availableFrames = ringBuffer_.getAvailableRead();
+            if (availableFrames >= dataReadyThreshold_ && dataReadyCallback_) {
+                // Call the callback to wake the pipeline thread
+                // Note: This is thread-safe - the callback uses condition_variable
+                dataReadyCallback_();
+            }
 
             // Log progress every 100 packets (~1 second)
             if (packetsProcessed % 100 == 0) {
