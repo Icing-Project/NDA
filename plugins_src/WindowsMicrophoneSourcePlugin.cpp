@@ -1,7 +1,11 @@
 #include "plugins/AudioSourcePlugin.h"
+#include "audio/RingBuffer.h"
 #include <algorithm>
 #include <iostream>
 #include <mutex>
+#include <thread>
+#include <atomic>
+#include <chrono>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -193,6 +197,35 @@ public:
         underruns_ = 0;
         readCalls_ = 0;
 
+        // ============================================================
+        // Ring Buffer Initialization (v2.1)
+        // ============================================================
+
+        // Calculate ring buffer capacity: 200ms for maximum stability
+        int ringBufferCapacity = (sampleRate_ * 200) / 1000;  // 200ms
+
+        if (!ringBuffer_.initialize(channels_, ringBufferCapacity)) {
+            std::cerr << "[WindowsMicrophone] Ring buffer initialization failed\n";
+            return false;
+        }
+
+        std::cerr << "[WindowsMicrophone] Ring buffer initialized: "
+                  << ringBufferCapacity << " frames ("
+                  << (ringBufferCapacity * 1000 / sampleRate_) << "ms, "
+                  << channels_ << " channels)\n";
+
+        // Initialize capture thread flag (thread started in start(), not here)
+        captureThreadRunning_.store(false, std::memory_order_relaxed);
+
+        // Allocate temporary conversion buffer (reused in capture thread)
+        tempBuffer_.resize(channels_);
+        const int maxPacketFrames = (sampleRate_ * 100) / 1000;  // 100ms
+        for (int ch = 0; ch < channels_; ++ch) {
+            tempBuffer_[ch].resize(maxPacketFrames);
+        }
+
+        // ============================================================
+
         state_ = PluginState::Initialized;
         std::cerr << "[WindowsMicrophone] Initialized: " << sampleRate_ << "Hz, "
                   << channels_ << "ch\n";
@@ -240,6 +273,16 @@ public:
         comOwned_ = false;
 #endif
 
+        // ============================================================
+        // Log Ring Buffer Statistics (v2.1)
+        // ============================================================
+
+        std::cerr << "[WindowsMicrophone] Ring buffer final stats:\n";
+        std::cerr << "  Overruns (buffer full): " << ringBuffer_.getOverruns() << "\n";
+        std::cerr << "  Underruns (buffer empty): " << ringBuffer_.getUnderruns() << "\n";
+
+        // ============================================================
+
         std::cerr << "[WindowsMicrophone] Shutdown: Captured " << framesCaptured_
                   << " frames, " << underruns_ << " underruns across "
                   << readCalls_ << " calls\n";
@@ -264,6 +307,20 @@ public:
                 return false;
             }
         }
+
+        // ============================================================
+        // Start Capture Thread (v2.1 Ring Buffer)
+        // ============================================================
+
+        captureThreadRunning_.store(true, std::memory_order_release);
+
+        captureThread_ = std::thread([this]() {
+            this->captureThreadFunc();
+        });
+
+        std::cerr << "[WindowsMicrophone] Capture thread started\n";
+
+        // ============================================================
 #endif
 
         state_ = PluginState::Running;
@@ -272,13 +329,37 @@ public:
     }
 
     void stop() override {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::unique_lock<std::mutex> lock(mutex_);
 
         if (state_ != PluginState::Running) {
             return;
         }
 
 #ifdef _WIN32
+        // ============================================================
+        // Stop Capture Thread (v2.1 Ring Buffer)
+        // ============================================================
+
+        if (captureThreadRunning_.load(std::memory_order_acquire)) {
+            std::cerr << "[WindowsMicrophone] Stopping capture thread...\n";
+
+            // Signal thread to stop
+            captureThreadRunning_.store(false, std::memory_order_release);
+        }
+
+        // Temporarily release mutex for thread join to avoid deadlock
+        lock.unlock();
+        if (captureThread_.joinable()) {
+            captureThread_.join();
+            std::cerr << "[WindowsMicrophone] Capture thread joined\n";
+        }
+        lock.lock();
+
+        // Clear ring buffer
+        ringBuffer_.clear();
+
+        // ============================================================
+
         if (audioClient_) {
             audioClient_->Stop();
         }
@@ -358,80 +439,73 @@ public:
             return false;
         }
 
-        // Get next packet from WASAPI
-        UINT32 packetFrames = 0;
-        HRESULT hr = captureClient_->GetNextPacketSize(&packetFrames);
-        if (FAILED(hr)) {
-            std::cerr << "[WindowsMicrophone] GetNextPacketSize failed: 0x" << std::hex << hr << std::dec << "\n";
-            buffer.clear();
-            underruns_++;
-            return false;
+        // ============================================================
+        // Read from ring buffer (not WASAPI directly) - v2.1
+        // ============================================================
+
+        std::vector<float*> channelPtrs(channels_);
+        for (int ch = 0; ch < channels_; ++ch) {
+            channelPtrs[ch] = buffer.getChannelData(ch);
         }
 
-        if (packetFrames == 0) {
-            // No data available - return silence
-            buffer.clear();
-            underruns_++;
-            return false;
-        }
+        int framesRead = ringBuffer_.read(channelPtrs.data(), requestedFrames);
 
-        // Get buffer from WASAPI
-        BYTE* captureData = nullptr;
-        DWORD flags = 0;
-        hr = captureClient_->GetBuffer(&captureData, &packetFrames, &flags, nullptr, nullptr);
-        if (FAILED(hr)) {
-            std::cerr << "[WindowsMicrophone] GetBuffer failed: 0x" << std::hex << hr << std::dec << "\n";
-            buffer.clear();
-            underruns_++;
-            return false;
-        }
+        // ============================================================
+        // Handle underrun: pad with silence if not enough data
+        // ============================================================
 
-        // Handle flags (silence/discontinuity)
-        if (flags & AUDCLNT_BUFFERFLAGS_SILENT) {
-            buffer.clear();
-        } else {
-            // Convert interleaved → planar with volume/mute
-            float* src = reinterpret_cast<float*>(captureData);
-            int framesToCopy = std::min((int)packetFrames, requestedFrames);
-
-            for (int frame = 0; frame < framesToCopy; ++frame) {
-                for (int ch = 0; ch < channels_; ++ch) {
-                    float sample = *src++;
-
-                    // Apply volume and mute
-                    if (mute_) {
-                        sample = 0.0f;
-                    } else {
-                        sample *= volume_;
-                    }
-
-                    buffer.getChannelData(ch)[frame] = sample;
+        if (framesRead < requestedFrames) {
+            // Ring buffer underrun - pad remainder with silence
+            for (int ch = 0; ch < bufferChannels; ++ch) {
+                float* channelData = buffer.getChannelData(ch);
+                for (int frame = framesRead; frame < requestedFrames; ++frame) {
+                    channelData[frame] = 0.0f;
                 }
             }
+            underruns_++;
+        }
 
-            // Pad with silence if needed
-            if (framesToCopy < requestedFrames) {
-                for (int ch = 0; ch < bufferChannels; ++ch) {
-                    float* channelData = buffer.getChannelData(ch);
-                    for (int frame = framesToCopy; frame < requestedFrames; ++frame) {
-                        channelData[frame] = 0.0f;
-                    }
+        // ============================================================
+        // Apply volume and mute (pipeline-side processing)
+        // ============================================================
+
+        for (int ch = 0; ch < bufferChannels; ++ch) {
+            float* channelData = buffer.getChannelData(ch);
+            for (int frame = 0; frame < requestedFrames; ++frame) {
+                float sample = channelData[frame];
+
+                if (mute_) {
+                    sample = 0.0f;
+                } else {
+                    sample *= volume_;
                 }
+
+                channelData[frame] = sample;
             }
         }
 
-        // Release buffer back to WASAPI
-        captureClient_->ReleaseBuffer(packetFrames);
+        // ============================================================
+        // Update metrics
+        // ============================================================
 
-        framesCaptured_ += packetFrames;
+        framesCaptured_ += framesRead;
 
-        // Log progress every 100 calls
+        // Log progress every 100 calls (include ring buffer diagnostics)
         if (readCalls_ % 100 == 0) {
             double secondsCaptured = static_cast<double>(framesCaptured_) / sampleRate_;
+            int availableFrames = ringBuffer_.getAvailableRead();
+            double fillMs = (availableFrames * 1000.0) / sampleRate_;
+
             std::cerr << "[WindowsMicrophone] Stats: " << framesCaptured_
                       << " frames (" << secondsCaptured << "s), "
-                      << underruns_ << " underruns\n";
+                      << underruns_ << " underruns, "
+                      << "ring buffer: " << availableFrames << " frames ("
+                      << fillMs << "ms fill)\n";
         }
+
+        // ============================================================
+        // Always return true (silence on underrun, not failure)
+        // ============================================================
 
         return true;
 #else
@@ -515,6 +589,161 @@ private:
 
     // Callback (not used in pull model, but required by interface)
     AudioSourceCallback callback_;
+
+    // ===== Ring Buffer Integration (v2.1) =====
+
+    /// Ring buffer for decoupling WASAPI async delivery from pipeline sync polling
+    RingBuffer ringBuffer_;
+
+    /// Background capture thread (polls WASAPI continuously)
+    std::thread captureThread_;
+
+    /// Capture thread lifecycle flag
+    std::atomic<bool> captureThreadRunning_;
+
+    /// Temporary conversion buffer (reused in capture thread, planar format)
+    std::vector<std::vector<float>> tempBuffer_;
+
+    // ===== End Ring Buffer Integration =====
+
+    /**
+     * @brief Capture thread function - polls WASAPI and feeds ring buffer.
+     */
+    void captureThreadFunc() {
+#ifdef _WIN32
+        // Set thread priority to time-critical for low latency
+        if (!SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL)) {
+            std::cerr << "[WindowsMicrophone] Capture thread: SetThreadPriority failed (error "
+                      << GetLastError() << ")\n";
+        } else {
+            std::cerr << "[WindowsMicrophone] Capture thread: priority set to TIME_CRITICAL\n";
+        }
+
+        // Initialize COM for this thread (WASAPI requires COM)
+        HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+        bool comInitInThread = SUCCEEDED(hr) || (hr == RPC_E_CHANGED_MODE);
+        bool comOwnedByThread = SUCCEEDED(hr) && (hr != RPC_E_CHANGED_MODE);
+
+        if (!comInitInThread) {
+            std::cerr << "[WindowsMicrophone] Capture thread: COM init failed (HRESULT 0x"
+                      << std::hex << hr << std::dec << ")\n";
+            return;
+        }
+
+        std::cerr << "[WindowsMicrophone] Capture thread: COM initialized "
+                  << (comOwnedByThread ? "(owned)" : "(inherited)") << "\n";
+
+        uint64_t packetsProcessed = 0;
+        uint64_t totalFramesCaptured = 0;
+
+        while (captureThreadRunning_.load(std::memory_order_acquire)) {
+            // Query WASAPI for next packet
+            UINT32 packetFrames = 0;
+            hr = captureClient_->GetNextPacketSize(&packetFrames);
+
+            if (FAILED(hr)) {
+                std::cerr << "[WindowsMicrophone] Capture thread: GetNextPacketSize failed (HRESULT 0x"
+                          << std::hex << hr << std::dec << ")\n";
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                continue;
+            }
+
+            if (packetFrames == 0) {
+                // No data available yet - sleep briefly and retry
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                continue;
+            }
+
+            // Get packet data from WASAPI
+            BYTE* captureData = nullptr;
+            DWORD flags = 0;
+            UINT64 devicePosition = 0;
+            UINT64 qpcPosition = 0;
+
+            hr = captureClient_->GetBuffer(
+                &captureData,
+                &packetFrames,
+                &flags,
+                &devicePosition,
+                &qpcPosition
+            );
+
+            if (FAILED(hr)) {
+                std::cerr << "[WindowsMicrophone] Capture thread: GetBuffer failed (HRESULT 0x"
+                          << std::hex << hr << std::dec << ")\n";
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                continue;
+            }
+
+            // Ensure temp buffer is large enough
+            for (int ch = 0; ch < channels_; ++ch) {
+                if (tempBuffer_[ch].size() < packetFrames) {
+                    tempBuffer_[ch].resize(packetFrames);
+                }
+            }
+
+            // Convert interleaved → planar
+            if (flags & AUDCLNT_BUFFERFLAGS_SILENT) {
+                // Silence packet - write zeros
+                for (int ch = 0; ch < channels_; ++ch) {
+                    std::fill(tempBuffer_[ch].begin(),
+                              tempBuffer_[ch].begin() + packetFrames,
+                              0.0f);
+                }
+            } else {
+                // Normal audio data - convert format
+                float* src = reinterpret_cast<float*>(captureData);
+                for (UINT32 frame = 0; frame < packetFrames; ++frame) {
+                    for (int ch = 0; ch < channels_; ++ch) {
+                        tempBuffer_[ch][frame] = *src++;
+                    }
+                }
+            }
+
+            // Write to ring buffer
+            std::vector<float*> channelPtrs(channels_);
+            for (int ch = 0; ch < channels_; ++ch) {
+                channelPtrs[ch] = tempBuffer_[ch].data();
+            }
+
+            int framesWritten = ringBuffer_.write(
+                const_cast<const float**>(channelPtrs.data()),
+                packetFrames
+            );
+
+            // Release WASAPI buffer
+            hr = captureClient_->ReleaseBuffer(packetFrames);
+            if (FAILED(hr)) {
+                std::cerr << "[WindowsMicrophone] Capture thread: ReleaseBuffer failed (HRESULT 0x"
+                          << std::hex << hr << std::dec << ")\n";
+            }
+
+            packetsProcessed++;
+            totalFramesCaptured += framesWritten;
+
+            // Log progress every 100 packets (~1 second)
+            if (packetsProcessed % 100 == 0) {
+                int bufferFill = ringBuffer_.getAvailableRead();
+                double fillMs = (bufferFill * 1000.0) / sampleRate_;
+
+                std::cerr << "[WindowsMicrophone] Capture thread: "
+                          << packetsProcessed << " packets, "
+                          << totalFramesCaptured << " frames, "
+                          << "ring buffer fill: " << bufferFill << " frames ("
+                          << fillMs << "ms)\n";
+            }
+        }
+
+        std::cerr << "[WindowsMicrophone] Capture thread exiting (processed "
+                  << packetsProcessed << " packets, "
+                  << totalFramesCaptured << " frames)\n";
+
+        // Cleanup COM if we own it
+        if (comOwnedByThread) {
+            CoUninitialize();
+        }
+#endif
+    }
 };
 
 } // namespace nda
