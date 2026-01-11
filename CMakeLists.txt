@@ -179,6 +179,7 @@ set(HEADERS
     include/audio/AudioDevice.h
     include/audio/AudioBuffer.h
     include/audio/Resampler.h
+    include/audio/RingBuffer.h
     include/core/ProcessingPipeline.h
     include/plugins/PluginTypes.h
     include/plugins/BasePlugin.h
