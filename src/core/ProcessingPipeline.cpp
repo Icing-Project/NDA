@@ -370,6 +370,13 @@ struct ProcessingPipeline::ProfilingData
     , lastLongFrameLog_()
     , peakLeft_(0.0f)
     , peakRight_(0.0f)
+    // v2.2: Event-driven pipeline
+    , schedulingMode_(SchedulingMode::Polling)  // Default to polling for backward compat
+    , sourceDataReady_(false)
+    , sinkSpaceAvailable_(true)  // Assume space available initially
+    , wakeLatencyTotalUs_(0)
+    , wakeLatencyMaxUs_(0)
+    , wakeCount_(0)
 {
     if (isTruthyEnv("NDA_PROFILE") || isTruthyEnv("NDA_PROFILE_PIPELINE")) {
         profiling_ = std::make_unique<ProfilingData>();
@@ -621,6 +628,10 @@ bool ProcessingPipeline::initialize()
 
     std::cout << "[Pipeline] Initialization complete - " << channels << " channels @ "
               << targetSampleRate_ << "Hz internal (frame size " << frameCount_ << ")" << std::endl;
+
+    // v2.2: Setup event-driven callbacks if plugins support it
+    setupEventCallbacks();
+
     return true;
 }
 
@@ -945,82 +956,158 @@ ProcessingPipeline::HealthStatus ProcessingPipeline::getHealthStatus() const
 
 void ProcessingPipeline::processingThread()
 {
-    std::cout << "[Pipeline] Processing thread started with real-time pacing" << std::endl;
+    if (schedulingMode_ == SchedulingMode::EventDriven) {
+        std::cout << "[Pipeline] Processing thread started with EVENT-DRIVEN scheduling" << std::endl;
+    } else {
+        std::cout << "[Pipeline] Processing thread started with POLLING (real-time pacing)" << std::endl;
+    }
 
     int frameCount = 0;
     uint64_t driftResyncEvents = 0;
 
     while (isRunning_) {
+        // v2.2: Event-driven vs. polling scheduling
+        if (schedulingMode_ == SchedulingMode::EventDriven) {
+            // === EVENT-DRIVEN MODE ===
+            // Wait for notification from source plugin (data ready) or timeout
+            {
+                std::unique_lock<std::mutex> lock(eventMutex_);
+
+                // Wait with predicate to handle spurious wake-ups
+                bool signaled = eventCV_.wait_for(lock,
+                    std::chrono::milliseconds(kEventTimeoutMs),
+                    [this]() {
+                        return sourceDataReady_.load(std::memory_order_acquire) || !isRunning_;
+                    });
+
+                if (!isRunning_) break;
+
+                // Calculate wake latency if we were signaled (not timeout)
+                if (signaled && sourceDataReady_.load(std::memory_order_relaxed)) {
+                    auto wakeTime = std::chrono::steady_clock::now();
+                    auto latencyUs = toMicros(wakeTime - lastNotifyTime_);
+
+                    // Update latency stats
+                    wakeLatencyTotalUs_.fetch_add(latencyUs, std::memory_order_relaxed);
+                    wakeCount_.fetch_add(1, std::memory_order_relaxed);
+
+                    // Update max latency (CAS loop for thread safety)
+                    uint64_t currentMax = wakeLatencyMaxUs_.load(std::memory_order_relaxed);
+                    while (latencyUs > currentMax) {
+                        if (wakeLatencyMaxUs_.compare_exchange_weak(currentMax, latencyUs,
+                                std::memory_order_relaxed, std::memory_order_relaxed)) {
+                            break;
+                        }
+                    }
+                }
+
+                // Clear the flag
+                sourceDataReady_.store(false, std::memory_order_release);
+            }
+        }
+
+        // Process the audio frame
         processAudioFrame();
         frameCount++;
 
-        // v2.0: Real-time pacing - sleep to maintain exact 1.0x real-time cadence
-        uint64_t attemptedSamples = processedSamples_ + droppedSamples_;
-        auto targetTime = startTime_ + std::chrono::microseconds(
-            (attemptedSamples * 1000000) / targetSampleRate_
-        );
+        // v2.2: Calculate drift in BOTH modes (event-driven and polling)
+        // Drift = wall time elapsed - audio time processed
+        {
+            auto now = std::chrono::steady_clock::now();
+            auto wallTimeUs = std::chrono::duration_cast<std::chrono::microseconds>(
+                now - startTime_
+            ).count();
 
-        auto now = std::chrono::steady_clock::now();
+            // Audio time = samples processed / sample rate (in microseconds)
+            int64_t audioTimeUs = (static_cast<int64_t>(processedSamples_) * 1000000) / targetSampleRate_;
 
-        if (now < targetTime) {
-            // We're ahead of schedule - sleep until target time
-            // v2.1: Update drift metrics (no drift when ahead)
+            // Drift = wall time - audio time (positive = behind, negative = ahead)
+            int64_t driftUs = wallTimeUs - audioTimeUs;
+            double driftMs = static_cast<double>(driftUs) / 1000.0;
+
+            // Update drift metrics
             {
                 std::lock_guard<std::mutex> lock(metricsMutex_);
-                currentDriftMs_ = 0.0;
-            }
-
-            auto sleepStart = now;
-            std::this_thread::sleep_until(targetTime);
-            const auto afterSleep = std::chrono::steady_clock::now();
-            if (profiling_) {
-                profiling_->pacingSleepUs.add(toMicros(afterSleep - sleepStart));
-                if (afterSleep > targetTime) {
-                    profiling_->pacingOvershootUs.add(toMicros(afterSleep - targetTime));
-                }
-            }
-            now = afterSleep;
-        } else {
-            // We're behind schedule - track drift
-            auto drift = std::chrono::duration_cast<std::chrono::milliseconds>(now - targetTime);
-
-            // v2.1: Update drift metrics
-            {
-                std::lock_guard<std::mutex> lock(metricsMutex_);
-                currentDriftMs_ = static_cast<double>(drift.count());
-                if (currentDriftMs_ > maxDriftMs_) {
-                    maxDriftMs_ = currentDriftMs_;
+                currentDriftMs_ = driftMs;
+                if (std::abs(driftMs) > std::abs(maxDriftMs_)) {
+                    maxDriftMs_ = driftMs;
                 }
             }
 
-            if (profiling_) {
-                const int64_t driftUs = static_cast<int64_t>(toMicros(now - targetTime));
-                profiling_->driftSamples++;
-                profiling_->driftUsTotal += driftUs;
-                if (driftUs > profiling_->driftUsMax) profiling_->driftUsMax = driftUs;
-            }
-            if (drift.count() > 50) {
-                // More than 50ms behind - log warning
+            // Log drift warnings (applicable in both modes)
+            if (driftMs > 50.0) {
                 driftWarnings_++;
-                if (driftWarnings_ % 100 == 0) {
-                    std::cerr << "[Pipeline] WARNING: " << drift.count()
+                if (driftWarnings_ % 100 == 1) {  // Log first and every 100th
+                    std::cerr << "[Pipeline] WARNING: " << driftMs
                               << "ms behind schedule (drift #" << driftWarnings_ << ")" << std::endl;
                 }
             }
+        }
 
-            // v2.1: DISABLED drift resync - it drops audio which violates zero-loss requirement
-            // Previously this would artificially increment droppedSamples_ to "catch up" when behind schedule.
-            // This caused audible artifacts (clicks, pops, crackling).
-            // New strategy: Let pipeline run as fast as it can. If it falls behind, that's a plugin performance
-            // issue that should be fixed, not hidden by dropping audio.
+        // v2.2: In event-driven mode, skip the sleep_until pacing
+        // The source callback provides natural timing
+        if (schedulingMode_ == SchedulingMode::Polling) {
+            // === POLLING MODE (Legacy) ===
+            // v2.0: Real-time pacing - sleep to maintain exact 1.0x real-time cadence
+            uint64_t attemptedSamples = processedSamples_ + droppedSamples_;
+            auto targetTime = startTime_ + std::chrono::microseconds(
+                (attemptedSamples * 1000000) / targetSampleRate_
+            );
 
-            // Original code (DISABLED):
-            // if (driftResyncMs_ > 0 && drift.count() > driftResyncMs_) {
-            //     droppedSamples_ += catchUpSamples;  // This was dropping audio!
-            // }
+            auto now = std::chrono::steady_clock::now();
+
+            if (now < targetTime) {
+                // We're ahead of schedule - sleep until target time
+                // v2.1: Update drift metrics (no drift when ahead)
+                {
+                    std::lock_guard<std::mutex> lock(metricsMutex_);
+                    currentDriftMs_ = 0.0;
+                }
+
+                auto sleepStart = now;
+                std::this_thread::sleep_until(targetTime);
+                const auto afterSleep = std::chrono::steady_clock::now();
+                if (profiling_) {
+                    profiling_->pacingSleepUs.add(toMicros(afterSleep - sleepStart));
+                    if (afterSleep > targetTime) {
+                        profiling_->pacingOvershootUs.add(toMicros(afterSleep - targetTime));
+                    }
+                }
+                now = afterSleep;
+            } else {
+                // We're behind schedule - track drift
+                auto drift = std::chrono::duration_cast<std::chrono::milliseconds>(now - targetTime);
+
+                // v2.1: Update drift metrics
+                {
+                    std::lock_guard<std::mutex> lock(metricsMutex_);
+                    currentDriftMs_ = static_cast<double>(drift.count());
+                    if (currentDriftMs_ > maxDriftMs_) {
+                        maxDriftMs_ = currentDriftMs_;
+                    }
+                }
+
+                if (profiling_) {
+                    const int64_t driftUs = static_cast<int64_t>(toMicros(now - targetTime));
+                    profiling_->driftSamples++;
+                    profiling_->driftUsTotal += driftUs;
+                    if (driftUs > profiling_->driftUsMax) profiling_->driftUsMax = driftUs;
+                }
+                if (drift.count() > 50) {
+                    // More than 50ms behind - log warning
+                    driftWarnings_++;
+                    if (driftWarnings_ % 100 == 0) {
+                        std::cerr << "[Pipeline] WARNING: " << drift.count()
+                                  << "ms behind schedule (drift #" << driftWarnings_ << ")" << std::endl;
+                    }
+                }
+
+                // v2.1: DISABLED drift resync - it drops audio which violates zero-loss requirement
+            }
         }
 
         // Log progress every second
+        auto now = std::chrono::steady_clock::now();
         if (frameCount % 100 == 0) {  // ~100 frames = ~1 second at 512 samples/frame
             auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - startTime_).count();
             double audioSeconds = (double)processedSamples_ / targetSampleRate_;
@@ -1028,6 +1115,11 @@ void ProcessingPipeline::processingThread()
                      << processedSamples_ << " samples (" << audioSeconds << "s of audio)";
             if (droppedSamples_ > 0) {
                 std::cout << ", dropped: " << droppedSamples_;
+            }
+            if (schedulingMode_ == SchedulingMode::EventDriven) {
+                std::cout << ", wake_lat(avg/max): "
+                          << (getAverageWakeLatencyUs() / 1000.0) << "/"
+                          << (getMaxWakeLatencyUs() / 1000.0) << "ms";
             }
             std::cout << std::endl;
         }
@@ -1351,6 +1443,86 @@ void ProcessingPipeline::processAudioFrame()
     }
 
     maybeLogLongFrame("ok");
+}
+
+// ===== v2.2: Event-Driven Pipeline Implementation =====
+
+void ProcessingPipeline::onSourceDataReady()
+{
+    // Record notification time for latency measurement
+    auto notifyTime = std::chrono::steady_clock::now();
+
+    // Set atomic flag (lock-free)
+    sourceDataReady_.store(true, std::memory_order_release);
+
+    // Store notify time for wake latency calculation
+    // Note: This is approximate - there's a small race window, but acceptable for metrics
+    lastNotifyTime_ = notifyTime;
+
+    // Wake pipeline thread via condition variable
+    eventCV_.notify_one();
+}
+
+void ProcessingPipeline::onSinkSpaceAvailable()
+{
+    // Set atomic flag (lock-free)
+    sinkSpaceAvailable_.store(true, std::memory_order_release);
+
+    // Wake pipeline thread if it might be waiting
+    eventCV_.notify_one();
+}
+
+void ProcessingPipeline::setupEventCallbacks()
+{
+    bool sourceAsync = source_ && source_->supportsAsyncMode();
+    bool sinkAsync = sink_ && sink_->supportsAsyncMode();
+
+    // CRITICAL: Only use event-driven mode if SOURCE supports async
+    // Event-driven mode waits for source data-ready notification
+    // If only sink is async, we still use polling for timing but get non-blocking writes
+    if (sourceAsync) {
+        schedulingMode_ = SchedulingMode::EventDriven;
+        std::cout << "[Pipeline] v2.2: Event-driven scheduling enabled (source is async)" << std::endl;
+
+        std::cout << "[Pipeline] Source '" << source_->getInfo().name
+                  << "' supports async mode - registering callback" << std::endl;
+
+        // Register our callback with the source plugin
+        source_->setDataReadyCallback([this]() {
+            this->onSourceDataReady();
+        });
+    } else {
+        schedulingMode_ = SchedulingMode::Polling;
+        std::cout << "[Pipeline] v2.2: Polling scheduling (source is synchronous)" << std::endl;
+    }
+
+    // Register sink callback regardless of scheduling mode
+    // This enables non-blocking writes even in polling mode
+    if (sinkAsync) {
+        std::cout << "[Pipeline] Sink '" << sink_->getInfo().name
+                  << "' supports async mode (non-blocking writes)" << std::endl;
+
+        // Register our callback with the sink plugin
+        sink_->setSpaceAvailableCallback([this]() {
+            this->onSinkSpaceAvailable();
+        });
+    } else {
+        std::cout << "[Pipeline] Sink is legacy (blocking writes)" << std::endl;
+    }
+}
+
+double ProcessingPipeline::getAverageWakeLatencyUs() const
+{
+    uint64_t count = wakeCount_.load(std::memory_order_relaxed);
+    if (count == 0) return 0.0;
+
+    uint64_t total = wakeLatencyTotalUs_.load(std::memory_order_relaxed);
+    return static_cast<double>(total) / static_cast<double>(count);
+}
+
+double ProcessingPipeline::getMaxWakeLatencyUs() const
+{
+    return static_cast<double>(wakeLatencyMaxUs_.load(std::memory_order_relaxed));
 }
 
 } // namespace nda

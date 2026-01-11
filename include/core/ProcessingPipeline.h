@@ -12,6 +12,8 @@
 #include <atomic>
 #include <chrono>
 #include <mutex>
+#include <condition_variable>
+#include <functional>
 
 namespace nda {
 
@@ -74,6 +76,48 @@ public:
     double getUptime() const;
     double getRealTimeRatio() const;
 
+    // ===== v2.2: Event-Driven Pipeline Support =====
+
+    /**
+     * @brief Pipeline scheduling mode
+     */
+    enum class SchedulingMode {
+        Polling,      // Legacy: sleep_until() based timing
+        EventDriven   // v2.2: Condition variable wake-ups from plugins
+    };
+
+    /**
+     * @brief Get current scheduling mode
+     */
+    SchedulingMode getSchedulingMode() const { return schedulingMode_; }
+
+    /**
+     * @brief Check if pipeline is using event-driven scheduling
+     */
+    bool isEventDriven() const { return schedulingMode_ == SchedulingMode::EventDriven; }
+
+    /**
+     * @brief Callback invoked by source plugins when data is ready.
+     *
+     * Thread-safe. Wakes the pipeline thread via condition variable.
+     * Called from source plugin background threads.
+     */
+    void onSourceDataReady();
+
+    /**
+     * @brief Callback invoked by sink plugins when space is available.
+     *
+     * Thread-safe. Wakes the pipeline thread via condition variable.
+     * Called from sink plugin background threads.
+     */
+    void onSinkSpaceAvailable();
+
+    /**
+     * @brief Get event-driven wake latency statistics (microseconds)
+     */
+    double getAverageWakeLatencyUs() const;
+    double getMaxWakeLatencyUs() const;
+
 private:
     enum class BackpressureMode
     {
@@ -130,6 +174,30 @@ private:
 
     struct ProfilingData;
     std::unique_ptr<ProfilingData> profiling_;
+
+    // ===== v2.2: Event-Driven Pipeline Infrastructure =====
+
+    SchedulingMode schedulingMode_;
+
+    // Condition variable for event-driven wake-ups
+    std::condition_variable eventCV_;
+    std::mutex eventMutex_;
+
+    // Atomic flags for data/space availability (set by callbacks, cleared by pipeline)
+    std::atomic<bool> sourceDataReady_;
+    std::atomic<bool> sinkSpaceAvailable_;
+
+    // Wake latency tracking
+    std::chrono::steady_clock::time_point lastNotifyTime_;
+    std::atomic<uint64_t> wakeLatencyTotalUs_;
+    std::atomic<uint64_t> wakeLatencyMaxUs_;
+    std::atomic<uint64_t> wakeCount_;
+
+    // Event-driven timeout (fallback to prevent hangs)
+    static constexpr int kEventTimeoutMs = 50;
+
+    // Setup callbacks on async-capable plugins
+    void setupEventCallbacks();
 };
 
 } // namespace nda
