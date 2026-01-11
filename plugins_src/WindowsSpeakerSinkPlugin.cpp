@@ -1,7 +1,12 @@
 #include "plugins/AudioSinkPlugin.h"
+#include "audio/RingBuffer.h"
 #include <algorithm>
 #include <iostream>
 #include <mutex>
+#include <thread>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -42,7 +47,10 @@ public:
           renderClient_(nullptr),
 #endif
           comInitialized_(false),
-          comOwned_(false)
+          comOwned_(false),
+          // v2.2: Event-driven / ring buffer support
+          renderThreadRunning_(false),
+          spaceAvailableThreshold_(512)
     {
     }
 
@@ -108,39 +116,50 @@ public:
             return false;
         }
 
-        // 6. Try to request our preferred format (48kHz, stereo, float32)
-        //    But keep original format as backup
-        WAVEFORMATEX requestedFormat = *mixFormat;
-        requestedFormat.nSamplesPerSec = sampleRate_;
-        requestedFormat.nChannels = channels_;
-        requestedFormat.wBitsPerSample = 32;  // float32
-        requestedFormat.nBlockAlign = channels_ * 4;
-        requestedFormat.nAvgBytesPerSec = sampleRate_ * channels_ * 4;
+        // 6. Log device's native format for debugging
+        std::cerr << "[WindowsSpeaker] Device mix format: " << mixFormat->nSamplesPerSec << "Hz, "
+                  << mixFormat->nChannels << "ch, " << mixFormat->wBitsPerSample << "bit\n";
 
-        // For WAVEFORMATEXTENSIBLE (most modern devices)
+        // 7. Prepare our requested format (48kHz, stereo, float32)
+        //    CRITICAL: In shared mode, we MUST use the device's native sample rate
+        //    Windows audio engine handles resampling, but we need to match the device
         bool useExtended = (mixFormat->wFormatTag == WAVE_FORMAT_EXTENSIBLE);
+
+        // In shared mode, Windows requires using the device's mix format sample rate
+        // We can change channels and bit depth, but sample rate is fixed by the device
+        int deviceSampleRate = mixFormat->nSamplesPerSec;
+
         if (useExtended) {
+            // Modify the extended format in place
             WAVEFORMATEXTENSIBLE* formatEx = reinterpret_cast<WAVEFORMATEXTENSIBLE*>(mixFormat);
             formatEx->SubFormat = KSDATAFORMAT_SUBTYPE_IEEE_FLOAT;
-        } else {
-            requestedFormat.wFormatTag = WAVE_FORMAT_IEEE_FLOAT;
+            formatEx->Format.wBitsPerSample = 32;
+            formatEx->Format.nBlockAlign = formatEx->Format.nChannels * 4;
+            formatEx->Format.nAvgBytesPerSec = formatEx->Format.nSamplesPerSec * formatEx->Format.nBlockAlign;
+            formatEx->Samples.wValidBitsPerSample = 32;
         }
 
-        // 7. Calculate buffer duration
-        //    200ms = more stable buffer for polling mode (reduces backpressure)
-        //    In shared mode, larger buffers prevent constant overruns
-        bufferFrames_ = (sampleRate_ * 200) / 1000;  // 200ms at sample rate
+        // Update our internal state to match device's actual sample rate
+        // This is CRITICAL - pipeline must know the true rate for correct pacing
+        if (deviceSampleRate != sampleRate_) {
+            std::cerr << "[WindowsSpeaker] Adapting to device sample rate: "
+                      << sampleRate_ << "Hz -> " << deviceSampleRate << "Hz\n";
+            sampleRate_ = deviceSampleRate;
+        }
+        channels_ = mixFormat->nChannels;
+
+        // 8. Calculate buffer duration at device's actual sample rate
+        bufferFrames_ = (sampleRate_ * 200) / 1000;  // 200ms at device rate
         REFERENCE_TIME bufferDuration = (REFERENCE_TIME)((10000000.0 * bufferFrames_) / sampleRate_);
 
-        // 8. Initialize audio client in SHARED mode with POLLING (not event-driven)
-        //    Shared mode: multiple apps can use device, Windows handles mixing
-        //    No event callback: simpler polling mode, more reliable for our sync API
+        // 9. Initialize audio client in SHARED mode
+        //    In shared mode, we MUST use the device's mix format (Windows requirement)
         hr = audioClient_->Initialize(
             AUDCLNT_SHAREMODE_SHARED,           // Shared mode (not exclusive)
             0,                                   // No special flags - polling mode
             bufferDuration,                      // Buffer size (200ms)
             0,                                   // Must be 0 in shared mode
-            useExtended ? mixFormat : &requestedFormat,
+            mixFormat,                           // MUST use device format in shared mode
             nullptr                              // No session GUID
         );
 
@@ -198,6 +217,35 @@ public:
         overruns_ = 0;
         writeCalls_ = 0;
 
+        // ============================================================
+        // v2.2: Ring Buffer Initialization (Event-Driven Pipeline)
+        // ============================================================
+
+        // Calculate ring buffer capacity: 200ms for maximum stability
+        int ringBufferCapacity = (sampleRate_ * 200) / 1000;  // 200ms
+
+        if (!ringBuffer_.initialize(channels_, ringBufferCapacity)) {
+            std::cerr << "[WindowsSpeaker] Ring buffer initialization failed\n";
+            return false;
+        }
+
+        std::cerr << "[WindowsSpeaker] Ring buffer initialized: "
+                  << ringBufferCapacity << " frames ("
+                  << (ringBufferCapacity * 1000 / sampleRate_) << "ms, "
+                  << channels_ << " channels)\n";
+
+        // Initialize render thread flag (thread started in start(), not here)
+        renderThreadRunning_.store(false, std::memory_order_relaxed);
+
+        // Allocate temporary conversion buffer (reused in render thread)
+        tempBuffer_.resize(channels_);
+        const int maxFramesPerWrite = 2048;  // Conservative max per WASAPI write
+        for (int ch = 0; ch < channels_; ++ch) {
+            tempBuffer_[ch].resize(maxFramesPerWrite);
+        }
+
+        // ============================================================
+
         state_ = PluginState::Initialized;
         std::cerr << "[WindowsSpeaker] Initialized: " << sampleRate_ << "Hz, "
                   << channels_ << "ch, " << bufferFrames_ << " frames\n";
@@ -245,6 +293,16 @@ public:
         comOwned_ = false;
 #endif
 
+        // ============================================================
+        // v2.2: Log Ring Buffer Statistics
+        // ============================================================
+
+        std::cerr << "[WindowsSpeaker] Ring buffer final stats:\n";
+        std::cerr << "  Overruns (buffer full): " << ringBuffer_.getOverruns() << "\n";
+        std::cerr << "  Underruns (buffer empty): " << ringBuffer_.getUnderruns() << "\n";
+
+        // ============================================================
+
         std::cerr << "[WindowsSpeaker] Shutdown: Wrote " << framesWritten_
                   << " frames, " << underruns_ << " underruns, " << overruns_
                   << " overruns across " << writeCalls_ << " calls\n";
@@ -262,38 +320,36 @@ public:
         }
 
 #ifdef _WIN32
-        if (audioClient_ && renderClient_) {
-            // CRITICAL: Prime the buffer with silence before Start()
-            // Microsoft docs: "ensures there is always data in the pipeline so the engine doesn't glitch"
-            // Reference: https://github.com/microsoft/Windows-classic-samples/.../RenderSharedTimerDriven
-            UINT32 bufferFrameCount = 0;
-            HRESULT hr = audioClient_->GetBufferSize(&bufferFrameCount);
-            if (SUCCEEDED(hr)) {
-                // Pre-roll the entire buffer with silence
-                BYTE* pData = nullptr;
-                hr = renderClient_->GetBuffer(bufferFrameCount, &pData);
-                if (SUCCEEDED(hr)) {
-                    // Release with SILENT flag - fills buffer with zeros
-                    hr = renderClient_->ReleaseBuffer(bufferFrameCount, AUDCLNT_BUFFERFLAGS_SILENT);
-                    if (SUCCEEDED(hr)) {
-                        std::cerr << "[WindowsSpeaker] Buffer primed with " << bufferFrameCount
-                                  << " frames of silence\n";
-                    } else {
-                        std::cerr << "[WindowsSpeaker] ReleaseBuffer (prime) failed: 0x"
-                                  << std::hex << hr << std::dec << "\n";
-                    }
-                } else {
-                    std::cerr << "[WindowsSpeaker] GetBuffer (prime) failed: 0x"
-                              << std::hex << hr << std::dec << "\n";
-                }
-            }
+        // ============================================================
+        // v2.2: Start Render Thread FIRST (Event-Driven Pipeline)
+        // ============================================================
+        // With ring buffer architecture, the render thread handles feeding WASAPI.
+        // We do NOT prime WASAPI buffer - that causes backpressure when the ring
+        // buffer fills up before WASAPI can drain the primed silence.
 
-            // Now start the audio engine
-            hr = audioClient_->Start();
+        renderThreadRunning_.store(true, std::memory_order_release);
+
+        renderThread_ = std::thread([this]() {
+            this->renderThreadFunc();
+        });
+
+        std::cerr << "[WindowsSpeaker] Render thread started\n";
+
+        // ============================================================
+
+        if (audioClient_) {
+            // v2.2: NO buffer priming - the render thread feeds WASAPI from ring buffer
+            // Small initial latency (~10-20ms) as ring buffer fills, but no backpressure
+            HRESULT hr = audioClient_->Start();
             if (FAILED(hr)) {
                 std::cerr << "[WindowsSpeaker] Start failed: 0x" << std::hex << hr << std::dec << "\n";
+                renderThreadRunning_.store(false, std::memory_order_release);
+                if (renderThread_.joinable()) {
+                    renderThread_.join();
+                }
                 return false;
             }
+            std::cerr << "[WindowsSpeaker] WASAPI audio client started (no buffer priming)\n";
         }
 #endif
 
@@ -303,13 +359,40 @@ public:
     }
 
     void stop() override {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::unique_lock<std::mutex> lock(mutex_);
 
         if (state_ != PluginState::Running) {
             return;
         }
 
 #ifdef _WIN32
+        // ============================================================
+        // v2.2: Stop Render Thread (Event-Driven Pipeline)
+        // ============================================================
+
+        if (renderThreadRunning_.load(std::memory_order_acquire)) {
+            std::cerr << "[WindowsSpeaker] Stopping render thread...\n";
+
+            // Signal thread to stop
+            renderThreadRunning_.store(false, std::memory_order_release);
+
+            // Wake the thread if it's waiting on the condition variable
+            renderCV_.notify_all();
+        }
+
+        // Temporarily release mutex for thread join to avoid deadlock
+        lock.unlock();
+        if (renderThread_.joinable()) {
+            renderThread_.join();
+            std::cerr << "[WindowsSpeaker] Render thread joined\n";
+        }
+        lock.lock();
+
+        // Clear ring buffer
+        ringBuffer_.clear();
+
+        // ============================================================
+
         if (audioClient_) {
             audioClient_->Stop();
         }
@@ -365,13 +448,16 @@ public:
     }
 
     bool writeAudio(const AudioBuffer& buffer) override {
+        // v2.2: Non-blocking write to ring buffer (NOT directly to WASAPI)
+        // The background render thread handles WASAPI writes
+        // This allows the pipeline to never block on sink backpressure
+
         std::lock_guard<std::mutex> lock(mutex_);
 
         if (state_ != PluginState::Running) {
             return false;
         }
 
-#ifdef _WIN32
         writeCalls_++;
         int frames = buffer.getFrameCount();
         int bufferChannels = buffer.getChannelCount();
@@ -383,76 +469,65 @@ public:
             return false;
         }
 
-        // Check available space
-        UINT32 padding = 0;
-        UINT32 deviceBufferSize = 0;
+        // ============================================================
+        // v2.2: Write to ring buffer (NON-BLOCKING)
+        // ============================================================
 
-        if (FAILED(audioClient_->GetCurrentPadding(&padding)) ||
-            FAILED(audioClient_->GetBufferSize(&deviceBufferSize))) {
-            std::cerr << "[WindowsSpeaker] Buffer query failed\n";
+        // Check available space in ring buffer
+        int availableSpace = ringBuffer_.getAvailableWrite();
+
+        if (availableSpace < frames) {
+            // Ring buffer full - signal overrun but still try partial write
             overruns_++;
-            return false;
-        }
 
-        UINT32 availableFrames = deviceBufferSize - padding;
-
-        if (availableFrames < (UINT32)frames) {
-            // Buffer full - backpressure signal
-            overruns_++;
-            return false;
-        }
-
-        // Get buffer from WASAPI
-        BYTE* deviceBuffer = nullptr;
-        HRESULT hr = renderClient_->GetBuffer(frames, &deviceBuffer);
-        if (FAILED(hr)) {
-            std::cerr << "[WindowsSpeaker] GetBuffer failed: 0x" << std::hex << hr << std::dec << "\n";
-            underruns_++;
-            return false;
-        }
-
-        // Convert planar → interleaved with volume/mute
-        float* dest = reinterpret_cast<float*>(deviceBuffer);
-
-        for (int frame = 0; frame < frames; ++frame) {
-            for (int ch = 0; ch < channels_; ++ch) {
-                float sample = buffer.getChannelData(ch)[frame];
-
-                // Apply volume and mute
-                if (mute_) {
-                    sample = 0.0f;
-                } else {
-                    sample *= volume_;
-                }
-
-                // Clamp to prevent distortion
-                sample = std::clamp(sample, -1.0f, 1.0f);
-
-                *dest++ = sample;
+            // Log if this is becoming frequent
+            if (overruns_ % 100 == 1) {
+                std::cerr << "[WindowsSpeaker] Ring buffer backpressure: "
+                          << availableSpace << " available, need " << frames << "\n";
             }
-        }
 
-        // Release buffer back to WASAPI
-        hr = renderClient_->ReleaseBuffer(frames, 0);
-        if (FAILED(hr)) {
-            std::cerr << "[WindowsSpeaker] ReleaseBuffer failed: 0x" << std::hex << hr << std::dec << "\n";
+            // Return false to signal backpressure to pipeline
+            // But pipeline won't block - it will retry next frame
             return false;
         }
 
-        framesWritten_ += frames;
+        // Prepare channel pointers for planar format
+        std::vector<const float*> channelPtrs(channels_);
+        for (int ch = 0; ch < channels_; ++ch) {
+            channelPtrs[ch] = buffer.getChannelData(ch);
+        }
 
-        // Log progress every 100 calls
+        // Write to ring buffer (lock-free, fast)
+        int framesWritten = ringBuffer_.write(channelPtrs.data(), frames);
+
+        if (framesWritten < frames) {
+            // Partial write (shouldn't happen given check above, but be safe)
+            overruns_++;
+        }
+
+        // Wake render thread if it might be sleeping
+        renderCV_.notify_one();
+
+        // Update metrics
+        framesWritten_ += framesWritten;
+
+        // ============================================================
+        // Log progress every 100 calls (include ring buffer diagnostics)
+        // ============================================================
+
         if (writeCalls_ % 100 == 0) {
             double secondsWritten = static_cast<double>(framesWritten_) / sampleRate_;
+            int bufferFill = ringBuffer_.getAvailableRead();
+            double fillMs = (bufferFill * 1000.0) / sampleRate_;
+
             std::cerr << "[WindowsSpeaker] Stats: " << framesWritten_
                       << " frames (" << secondsWritten << "s), "
-                      << underruns_ << " underruns, " << overruns_ << " overruns\n";
+                      << underruns_ << " underruns, " << overruns_ << " overruns, "
+                      << "ring buffer: " << bufferFill << " frames ("
+                      << fillMs << "ms fill)\n";
         }
 
-        return true;
-#else
-        return false;
-#endif
+        return framesWritten > 0;
     }
 
     int getSampleRate() const override {
@@ -471,26 +546,43 @@ public:
     }
 
     int getAvailableSpace() const override {
+        // v2.2: Return ring buffer available space (not WASAPI buffer)
+        // This allows pipeline to know if write will succeed without blocking
+
         std::lock_guard<std::mutex> lock(mutex_);
 
-#ifdef _WIN32
-        if (state_ != PluginState::Running || !audioClient_) {
+        if (state_ != PluginState::Running) {
             return 0;
         }
 
-        UINT32 padding = 0;
-        UINT32 deviceBufferSize = 0;
-
-        if (FAILED(audioClient_->GetCurrentPadding(&padding)) ||
-            FAILED(audioClient_->GetBufferSize(&deviceBufferSize))) {
-            return 0;
-        }
-
-        return static_cast<int>(deviceBufferSize - padding);
-#else
-        return 0;
-#endif
+        return ringBuffer_.getAvailableWrite();
     }
+
+    // ===== v2.2: Event-Driven Pipeline Support =====
+
+    bool supportsAsyncMode() const override {
+        // This plugin uses ring buffer + background thread, supports async mode
+        return true;
+    }
+
+    void setSpaceAvailableCallback(SpaceAvailableCallback callback) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        spaceAvailableCallback_ = callback;
+
+        if (callback) {
+            std::cerr << "[WindowsSpeaker] v2.2: Space-available callback registered "
+                      << "(threshold: " << spaceAvailableThreshold_ << " frames)\n";
+        } else {
+            std::cerr << "[WindowsSpeaker] v2.2: Space-available callback cleared\n";
+        }
+    }
+
+    bool isNonBlocking() const override {
+        // writeAudio() writes to ring buffer, never blocks
+        return true;
+    }
+
+    // ===== End Event-Driven Pipeline Support =====
 
     void setSampleRate(int rate) override {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -551,6 +643,174 @@ private:
     // COM state
     bool comInitialized_;
     bool comOwned_;
+
+    // ===== v2.2: Event-Driven Pipeline / Ring Buffer =====
+
+    // Lock-free ring buffer for async writes (pipeline → render thread)
+    RingBuffer ringBuffer_;
+
+    // Background render thread (reads ring buffer → writes WASAPI)
+    std::thread renderThread_;
+    std::atomic<bool> renderThreadRunning_;
+
+    // Condition variable to wake render thread when data arrives
+    std::condition_variable renderCV_;
+    std::mutex renderMutex_;
+
+    // Temporary buffer for WASAPI interleave conversion
+    std::vector<std::vector<float>> tempBuffer_;
+
+    // Callback for event-driven pipeline (space available notification)
+    SpaceAvailableCallback spaceAvailableCallback_;
+    int spaceAvailableThreshold_;
+
+    // Background render thread function
+    void renderThreadFunc() {
+#ifdef _WIN32
+        // Set thread priority to HIGH for reliable audio rendering
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+
+        // Initialize COM on this thread (required for WASAPI)
+        HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+        bool comOwned = SUCCEEDED(hr);
+
+        std::cerr << "[WindowsSpeaker] Render thread started with TIME_CRITICAL priority\n";
+
+        std::vector<float*> readPtrs(channels_);
+        for (int ch = 0; ch < channels_; ++ch) {
+            readPtrs[ch] = tempBuffer_[ch].data();
+        }
+
+        uint64_t totalFramesRendered = 0;
+        uint64_t loopCount = 0;
+
+        // Target WASAPI buffer level: ~50ms (keeps WASAPI fed without over-filling)
+        // This prevents the render thread from filling WASAPI completely and then
+        // waiting for it to drain, which would cause ring buffer to fill up.
+        const int targetBufferFrames = (sampleRate_ * 50) / 1000;  // 50ms = 2400 frames at 48kHz
+        const int minBufferFrames = (sampleRate_ * 20) / 1000;     // 20ms minimum before writing
+
+        std::cerr << "[WindowsSpeaker] Render thread target buffer: " << targetBufferFrames
+                  << " frames (" << (targetBufferFrames * 1000 / sampleRate_) << "ms)\n";
+
+        while (renderThreadRunning_.load(std::memory_order_acquire)) {
+            loopCount++;
+
+            // Query WASAPI for current buffer level
+            UINT32 padding = 0;
+            hr = audioClient_->GetCurrentPadding(&padding);
+            if (FAILED(hr)) {
+                std::cerr << "[WindowsSpeaker] GetCurrentPadding failed: 0x"
+                          << std::hex << hr << std::dec << "\n";
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                continue;
+            }
+
+            int currentPadding = static_cast<int>(padding);
+
+            // Only write if WASAPI buffer is below target level
+            if (currentPadding >= targetBufferFrames) {
+                // WASAPI has enough data, sleep until it drains below target
+                // Sleep for half the excess time to stay responsive
+                int excessFrames = currentPadding - minBufferFrames;
+                int sleepMs = std::max(1, (excessFrames * 1000) / (sampleRate_ * 2));
+                sleepMs = std::min(sleepMs, 10);  // Cap at 10ms for responsiveness
+                std::this_thread::sleep_for(std::chrono::milliseconds(sleepMs));
+                continue;
+            }
+
+            // Calculate how many frames to write to reach target level
+            int framesToTarget = targetBufferFrames - currentPadding;
+
+            // Check ring buffer availability
+            int availableInRing = ringBuffer_.getAvailableRead();
+
+            if (availableInRing == 0) {
+                // Ring buffer empty - wait for data from pipeline
+                std::unique_lock<std::mutex> lock(renderMutex_);
+                renderCV_.wait_for(lock, std::chrono::milliseconds(5),
+                    [this]() {
+                        return ringBuffer_.getAvailableRead() > 0 ||
+                               !renderThreadRunning_.load(std::memory_order_relaxed);
+                    });
+                continue;
+            }
+
+            // Write up to target level, limited by available data and temp buffer
+            int framesToWrite = std::min({framesToTarget, availableInRing,
+                                          static_cast<int>(tempBuffer_[0].size())});
+
+            if (framesToWrite <= 0) {
+                continue;
+            }
+
+            // Read from ring buffer (lock-free)
+            int framesRead = ringBuffer_.read(readPtrs.data(), framesToWrite);
+            if (framesRead == 0) {
+                continue;
+            }
+
+            // Get WASAPI buffer and write interleaved data
+            BYTE* pData = nullptr;
+            hr = renderClient_->GetBuffer(framesRead, &pData);
+            if (FAILED(hr)) {
+                std::cerr << "[WindowsSpeaker] GetBuffer failed: 0x"
+                          << std::hex << hr << std::dec << "\n";
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                continue;
+            }
+
+            // Convert planar → interleaved float32
+            float* output = reinterpret_cast<float*>(pData);
+            for (int f = 0; f < framesRead; ++f) {
+                for (int ch = 0; ch < channels_; ++ch) {
+                    // Apply volume and mute
+                    float sample = readPtrs[ch][f];
+                    if (!mute_) {
+                        sample *= volume_;
+                    } else {
+                        sample = 0.0f;
+                    }
+                    output[f * channels_ + ch] = sample;
+                }
+            }
+
+            hr = renderClient_->ReleaseBuffer(framesRead, 0);
+            if (FAILED(hr)) {
+                std::cerr << "[WindowsSpeaker] ReleaseBuffer failed: 0x"
+                          << std::hex << hr << std::dec << "\n";
+            }
+
+            totalFramesRendered += framesRead;
+
+            // Notify pipeline that space is available (event-driven mode)
+            int newAvailableWrite = ringBuffer_.getAvailableWrite();
+            if (newAvailableWrite >= spaceAvailableThreshold_ && spaceAvailableCallback_) {
+                spaceAvailableCallback_();
+            }
+
+            // Log progress periodically
+            if (loopCount % 1000 == 0) {
+                int currentFill = ringBuffer_.getAvailableRead();
+                double fillMs = (currentFill * 1000.0) / sampleRate_;
+                std::cerr << "[WindowsSpeaker] Render: " << totalFramesRendered
+                          << " frames, WASAPI padding: " << currentPadding
+                          << ", ring fill: " << currentFill << " ("
+                          << fillMs << "ms)\n";
+            }
+        }
+
+        // Cleanup COM on this thread
+        if (comOwned) {
+            CoUninitialize();
+        }
+
+        std::cerr << "[WindowsSpeaker] Render thread exiting (rendered "
+                  << totalFramesRendered << " frames)\n";
+#endif
+    }
+
+    // ===== End Event-Driven Pipeline =====
 };
 
 } // namespace nda
