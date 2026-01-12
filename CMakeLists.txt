@@ -155,6 +155,7 @@ set(SOURCES
     src/audio/AudioEngine.cpp
     src/audio/AudioDevice.cpp
     src/audio/Resampler.cpp
+    src/audio/WasapiDeviceEnum.cpp
     src/core/ProcessingPipeline.cpp
     src/plugins/PluginManager.cpp
     src/plugins/PluginPaths.cpp
@@ -180,6 +181,7 @@ set(HEADERS
     include/audio/AudioBuffer.h
     include/audio/Resampler.h
     include/audio/RingBuffer.h
+    include/audio/WasapiDeviceEnum.h
     include/core/ProcessingPipeline.h
     include/plugins/PluginTypes.h
     include/plugins/BasePlugin.h
@@ -297,7 +299,7 @@ list(APPEND NDA_PLUGIN_TARGETS
 # Platform-specific settings
 if(WIN32)
     # Windows audio APIs
-    target_link_libraries(${PROJECT_NAME} winmm dsound)
+    target_link_libraries(${PROJECT_NAME} winmm dsound ole32)
     # Enable console for debugging
     set_target_properties(${PROJECT_NAME} PROPERTIES WIN32_EXECUTABLE OFF)
 endif()

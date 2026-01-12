@@ -8,6 +8,8 @@
 #include <QProgressBar>
 #include <QTimer>
 #include <QShortcut>
+#include <QKeyEvent>
+#include <QFocusEvent>
 #include "core/ProcessingPipeline.h"
 #include "plugins/PluginManager.h"
 #include "ui/PluginSidebar.h"
@@ -74,6 +76,12 @@ private slots:
     // Plugin configuration
     void onPluginFocused(const std::string& pluginName, PluginType type);
 
+protected:
+    // Keyboard input for PTT (T and Space keys)
+    void keyPressEvent(QKeyEvent* event) override;
+    void keyReleaseEvent(QKeyEvent* event) override;
+    void focusOutEvent(QFocusEvent* event) override;
+
 private:
     void setupUI();
     void createTXPipelineRow(QVBoxLayout* layout);
@@ -82,6 +90,10 @@ private:
     void updateTXStatus();
     void updateRXStatus();
     void applyModernStyles();
+
+    // PTT helpers
+    bool isAIOCSink(std::shared_ptr<AudioSinkPlugin> sink) const;
+    void updatePTTButtonState();
     
     QWidget* createPipelineCard(const QString& title, bool isTX);
     QProgressBar* createAudioMeter();

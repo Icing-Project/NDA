@@ -26,6 +26,23 @@
 
 namespace nda {
 
+#ifdef _WIN32
+// Helper to convert wstring to UTF-8 string (avoids wchar_t to char truncation warnings)
+static std::string wstringToUtf8(const std::wstring& wstr)
+{
+    if (wstr.empty()) return std::string();
+    int sizeNeeded = WideCharToMultiByte(CP_UTF8, 0, wstr.data(),
+                                          static_cast<int>(wstr.size()),
+                                          nullptr, 0, nullptr, nullptr);
+    if (sizeNeeded <= 0) return std::string();
+    std::string result(sizeNeeded, 0);
+    WideCharToMultiByte(CP_UTF8, 0, wstr.data(),
+                        static_cast<int>(wstr.size()),
+                        &result[0], sizeNeeded, nullptr, nullptr);
+    return result;
+}
+#endif
+
 static constexpr unsigned int kDefaultVid = 0x1209;
 static constexpr unsigned int kDefaultPid = 0x7388;
 static constexpr size_t kMaxQueuedBuffers = 32;
@@ -51,6 +68,10 @@ AIOCSession::AIOCSession()
       vpttHangMs_(200),
       vcosThreshold_(0x00000020),
       vcosHangMs_(200),
+      captureThreadRunning_(false),
+      playbackThreadRunning_(false),
+      dataReadyThreshold_(512),
+      spaceAvailableThreshold_(512),
       hidDevice_(nullptr),
       cdcHandle_(nullptr),
       renderClient_(nullptr),
@@ -84,6 +105,26 @@ void AIOCSession::setVpttHangMs(uint32_t hangMs) { std::lock_guard<std::mutex> l
 void AIOCSession::setVcosThreshold(uint32_t threshold) { std::lock_guard<std::mutex> lock(mutex_); vcosThreshold_ = threshold; }
 void AIOCSession::setVcosHangMs(uint32_t hangMs) { std::lock_guard<std::mutex> lock(mutex_); vcosHangMs_ = hangMs; }
 void AIOCSession::enableLoopback(bool enable) { std::lock_guard<std::mutex> lock(mutex_); loopbackEnabled_ = enable; }
+
+// v2.2: Callback setters
+void AIOCSession::setDataReadyCallback(std::function<void()> callback) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    dataReadyCallback_ = callback;
+}
+
+void AIOCSession::setSpaceAvailableCallback(std::function<void()> callback) {
+    std::lock_guard<std::mutex> lock(playbackMutex_);
+    spaceAvailableCallback_ = callback;
+}
+
+// v2.2: Ring buffer stats
+int AIOCSession::getCaptureRingBufferAvailable() const {
+    return captureRingBuffer_.getAvailableRead();
+}
+
+int AIOCSession::getPlaybackRingBufferAvailable() const {
+    return playbackRingBuffer_.getAvailableWrite();
+}
 
 bool AIOCSession::ensureComInitialized()
 {
@@ -216,6 +257,12 @@ bool AIOCSession::start()
         lastMessage_ = "Start failed: not connected";
         return false;
     }
+
+    // v2.2: Initialize ring buffers (200ms capacity at 48kHz = 9600 frames)
+    int ringBufferCapacity = (sampleRate_ * 200) / 1000;
+    captureRingBuffer_.initialize(channels_, ringBufferCapacity);
+    playbackRingBuffer_.initialize(channels_, ringBufferCapacity);
+
 #ifdef _WIN32
     if (captureClient_) {
         static_cast<IAudioClient*>(captureClient_)->Start();
@@ -224,26 +271,59 @@ bool AIOCSession::start()
         static_cast<IAudioClient*>(renderClient_)->Start();
     }
 #endif
+
     running_ = true;
-    lastMessage_ = "Streaming started";
+
+    // v2.2: Start background threads AFTER WASAPI is running
+    captureThreadRunning_.store(true, std::memory_order_release);
+    playbackThreadRunning_.store(true, std::memory_order_release);
+
+    captureThread_ = std::thread([this]() { this->captureThreadFunc(); });
+    playbackThread_ = std::thread([this]() { this->playbackThreadFunc(); });
+
+    lastMessage_ = "Streaming started with ring buffers";
     return true;
 }
 
 void AIOCSession::stop()
 {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (!running_) return;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!running_) return;
+        running_ = false;  // Set this early so threads can see it
+    }
+
+    // v2.2: Signal background threads to stop
+    captureThreadRunning_.store(false, std::memory_order_release);
+    playbackThreadRunning_.store(false, std::memory_order_release);
+    playbackCV_.notify_all();  // Wake playback thread if waiting
+
+    // Join threads WITHOUT holding mutex (avoid deadlock)
+    if (captureThread_.joinable()) {
+        captureThread_.join();
+    }
+    if (playbackThread_.joinable()) {
+        playbackThread_.join();
+    }
+
+    // Now stop WASAPI and clean up (reacquire mutex)
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
 #ifdef _WIN32
-    if (captureClient_) {
-        static_cast<IAudioClient*>(captureClient_)->Stop();
-    }
-    if (renderClient_) {
-        static_cast<IAudioClient*>(renderClient_)->Stop();
-    }
+        if (captureClient_) {
+            static_cast<IAudioClient*>(captureClient_)->Stop();
+        }
+        if (renderClient_) {
+            static_cast<IAudioClient*>(renderClient_)->Stop();
+        }
 #endif
-    pttAsserted_ = false;
-    running_ = false;
-    lastMessage_ = "Streaming stopped";
+        // Clear ring buffers
+        captureRingBuffer_.clear();
+        playbackRingBuffer_.clear();
+
+        pttAsserted_ = false;
+        lastMessage_ = "Streaming stopped";
+    }
 }
 
 bool AIOCSession::setPttState(bool asserted)
@@ -288,73 +368,47 @@ bool AIOCSession::writePlayback(const AudioBuffer& buffer)
         return false;
     }
 
-#ifdef _WIN32
-    if (renderClient_ && audioRender_) {
-        IAudioClient* client = static_cast<IAudioClient*>(renderClient_);
-        IAudioRenderClient* render = static_cast<IAudioRenderClient*>(audioRender_);
+    // v2.2: Non-blocking write to ring buffer (background playback thread drains to WASAPI)
+    int availableSpace = playbackRingBuffer_.getAvailableWrite();
+    int frames = buffer.getFrameCount();
+    int channels = buffer.getChannelCount();
 
-        UINT32 padding = 0;
-        UINT32 bufferSize = 0;
-        if (FAILED(client->GetCurrentPadding(&padding)) ||
-            FAILED(client->GetBufferSize(&bufferSize))) {
-            lastMessage_ = "Render padding failed";
-            return false;
-        }
-
-        UINT32 frames = buffer.getFrameCount();
-        if (frames > bufferSize - padding) {
-            overruns_++;
-            lastMessage_ = "Render overrun";
-            return false;
-        }
-
-        BYTE* data = nullptr;
-        if (FAILED(render->GetBuffer(frames, &data))) {
-            lastMessage_ = "Render GetBuffer failed";
-            return false;
-        }
-
-        // Assume float format; if not, we'll convert to 16-bit.
-        WAVEFORMATEX* mixFmt = nullptr;
-        client->GetMixFormat(&mixFmt);
-        bool isFloat = mixFmt && mixFmt->wFormatTag == WAVE_FORMAT_IEEE_FLOAT;
-        UINT32 channels = mixFmt ? mixFmt->nChannels : static_cast<UINT32>(buffer.getChannelCount());
-
-        for (UINT32 f = 0; f < frames; ++f) {
-            for (UINT32 c = 0; c < channels; ++c) {
-                const float* srcCh = buffer.getChannelData(static_cast<int>(c < static_cast<UINT32>(buffer.getChannelCount()) ? c : 0));
-                float sample = srcCh ? srcCh[f] * volumeOut_ : 0.0f;
-                if (muteOut_) sample = 0.0f;
-                if (isFloat) {
-                    reinterpret_cast<float*>(data)[f * channels + c] = sample;
-                } else {
-                    int16_t s = static_cast<int16_t>(std::max(-1.0f, std::min(1.0f, sample)) * 32767.0f);
-                    reinterpret_cast<int16_t*>(data)[f * channels + c] = s;
-                }
-            }
-        }
-
-        if (mixFmt) CoTaskMemFree(mixFmt);
-        render->ReleaseBuffer(frames, 0);
-        framesPlayed_ += frames;
-        return true;
-    }
-#endif
-
-    // Loopback-only path
-    if (loopbackEnabled_) {
-        std::vector<float> interleaved;
-        copyToInterleaved(buffer, interleaved);
-        if (captureQueue_.size() >= kMaxQueuedBuffers) {
-            captureQueue_.pop_front();
-            ++overruns_;
-        }
-        captureQueue_.push_back(std::move(interleaved));
-        framesPlayed_ += static_cast<uint64_t>(buffer.getFrameCount());
-        return true;
+    if (availableSpace < frames) {
+        ++overruns_;
+        lastMessage_ = "Playback ring buffer full";
+        return false;  // Signal backpressure to plugin
     }
 
-    return false;
+    // Prepare channel pointers (apply volume/mute first)
+    std::vector<std::vector<float>> processedBuffer(channels);
+    for (int ch = 0; ch < channels; ++ch) {
+        processedBuffer[ch].resize(frames);
+        const float* srcData = buffer.getChannelData(ch);
+        float gain = muteOut_ ? 0.0f : volumeOut_;
+
+        for (int f = 0; f < frames; ++f) {
+            processedBuffer[ch][f] = srcData[f] * gain;
+        }
+    }
+
+    // Write to ring buffer
+    std::vector<const float*> channelPtrs(channels);
+    for (int ch = 0; ch < channels; ++ch) {
+        channelPtrs[ch] = processedBuffer[ch].data();
+    }
+
+    int written = playbackRingBuffer_.write(channelPtrs.data(), frames);
+
+    // Wake playback thread
+    playbackCV_.notify_one();
+
+    if (written < frames) {
+        ++overruns_;
+        lastMessage_ = "Partial playback write";
+        return false;
+    }
+
+    return true;
 }
 
 bool AIOCSession::readCapture(AudioBuffer& buffer)
@@ -366,81 +420,38 @@ bool AIOCSession::readCapture(AudioBuffer& buffer)
         return false;
     }
 
-#ifdef _WIN32
-    if (captureClient_ && audioCapture_) {
-        IAudioCaptureClient* cap = static_cast<IAudioCaptureClient*>(audioCapture_);
-        IAudioClient* client = static_cast<IAudioClient*>(captureClient_);
+    // v2.2: Non-blocking read from ring buffer (background capture thread fills from WASAPI)
+    int requestedFrames = buffer.getFrameCount();
+    int channels = buffer.getChannelCount();
 
-        UINT32 packetFrames = 0;
-        BYTE* data = nullptr;
-        DWORD flags = 0;
-
-        HRESULT hr = cap->GetBuffer(&data, &packetFrames, &flags, nullptr, nullptr);
-        if (hr == AUDCLNT_S_BUFFER_EMPTY) {
-            buffer.clear();
-            ++underruns_;
-            return true; // silence to keep pipeline moving
-        }
-        if (FAILED(hr)) {
-            lastMessage_ = "Capture GetBuffer failed";
-            buffer.clear();
-            return false;
-        }
-
-        WAVEFORMATEX* mixFmt = nullptr;
-        client->GetMixFormat(&mixFmt);
-        bool isFloat = mixFmt && mixFmt->wFormatTag == WAVE_FORMAT_IEEE_FLOAT;
-        UINT32 channels = mixFmt ? mixFmt->nChannels : static_cast<UINT32>(buffer.getChannelCount());
-
-        // Resize buffer if needed
-        if (buffer.getChannelCount() != static_cast<int>(channels) || buffer.getFrameCount() != static_cast<int>(packetFrames)) {
-            buffer.resize(static_cast<int>(channels), static_cast<int>(packetFrames));
-        }
-
-        for (UINT32 f = 0; f < packetFrames; ++f) {
-            for (UINT32 c = 0; c < channels; ++c) {
-                float* dst = buffer.getChannelData(static_cast<int>(c));
-                if (isFloat) {
-                    dst[f] = reinterpret_cast<float*>(data)[f * channels + c];
-                } else {
-                    int16_t s = reinterpret_cast<int16_t*>(data)[f * channels + c];
-                    dst[f] = static_cast<float>(s) / 32768.0f;
-                }
-            }
-        }
-
-        cap->ReleaseBuffer(packetFrames);
-        if (mixFmt) CoTaskMemFree(mixFmt);
-
-        // Apply volume/mute
-        if (muteIn_ || volumeIn_ != 1.0f) {
-            float gain = muteIn_ ? 0.0f : volumeIn_;
-            int frames = buffer.getFrameCount();
-            int chans = buffer.getChannelCount();
-            for (int ch = 0; ch < chans; ++ch) {
-                float* channelData = buffer.getChannelData(ch);
-                for (int i = 0; i < frames; ++i) {
-                    channelData[i] *= gain;
-                }
-            }
-        }
-
-        framesCaptured_ += packetFrames;
-        return true;
-    }
-#endif
-
-    // Loopback path
-    if (!captureQueue_.empty()) {
-        auto interleaved = std::move(captureQueue_.front());
-        captureQueue_.pop_front();
-        copyFromInterleaved(interleaved, buffer);
-        framesCaptured_ += static_cast<uint64_t>(buffer.getFrameCount());
-        return true;
+    // Prepare channel pointers for reading
+    std::vector<float*> channelPtrs(channels);
+    for (int ch = 0; ch < channels; ++ch) {
+        channelPtrs[ch] = buffer.getChannelData(ch);
     }
 
-    buffer.clear();
-    ++underruns_;
+    int framesRead = captureRingBuffer_.read(channelPtrs.data(), requestedFrames);
+
+    // Pad with silence on underrun (pipeline keeps moving)
+    if (framesRead < requestedFrames) {
+        for (int ch = 0; ch < channels; ++ch) {
+            float* data = buffer.getChannelData(ch);
+            std::fill(data + framesRead, data + requestedFrames, 0.0f);
+        }
+        ++underruns_;
+    }
+
+    // Apply volume/mute
+    if (muteIn_ || volumeIn_ != 1.0f) {
+        float gain = muteIn_ ? 0.0f : volumeIn_;
+        for (int ch = 0; ch < channels; ++ch) {
+            float* channelData = buffer.getChannelData(ch);
+            for (int i = 0; i < requestedFrames; ++i) {
+                channelData[i] *= gain;
+            }
+        }
+    }
+
     return true;
 }
 
@@ -471,6 +482,258 @@ AIOCTelemetry AIOCSession::getTelemetry() const
     t.overruns = overruns_;
     t.lastMessage = lastMessage_;
     return t;
+}
+
+// v2.2: Background capture thread (AIOC microphone → ring buffer)
+void AIOCSession::captureThreadFunc()
+{
+#ifdef _WIN32
+    // Initialize COM for this thread
+    HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    bool threadOwnsCom = SUCCEEDED(hr);
+
+    // Set thread priority to time-critical for low-latency audio
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+
+    std::cerr << "[AIOCSession] Capture thread started\n";
+
+    while (captureThreadRunning_.load(std::memory_order_acquire)) {
+        // v2.2 fix: Check state and get pointers with minimal mutex hold time
+        bool shouldSleep = false;
+        int sleepMs = 1;
+        IAudioCaptureClient* pCapture = nullptr;
+        int channels = 0;
+
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (!running_ || !captureClient_) {
+                shouldSleep = true;
+                sleepMs = 10;
+            } else {
+                pCapture = static_cast<IAudioCaptureClient*>(audioCapture_);
+                channels = channels_;
+                if (!pCapture) {
+                    shouldSleep = true;
+                    sleepMs = 10;
+                }
+            }
+        }
+
+        // Sleep OUTSIDE mutex to avoid blocking readCapture()
+        if (shouldSleep) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(sleepMs));
+            continue;
+        }
+
+        // WASAPI operations (these don't need our mutex - WASAPI is thread-safe)
+        UINT32 packetLength = 0;
+        hr = pCapture->GetNextPacketSize(&packetLength);
+        if (FAILED(hr) || packetLength == 0) {
+            // No data available - sleep outside mutex
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            continue;
+        }
+
+        BYTE* pData = nullptr;
+        UINT32 numFramesAvailable = 0;
+        DWORD flags = 0;
+
+        hr = pCapture->GetBuffer(&pData, &numFramesAvailable, &flags, nullptr, nullptr);
+        if (FAILED(hr)) {
+            continue;
+        }
+
+        if (numFramesAvailable > 0 && pData) {
+            // Allocate temp buffer if needed (thread-local, no mutex needed)
+            if (captureTempBuffer_.size() != static_cast<size_t>(channels) ||
+                captureTempBuffer_[0].size() < numFramesAvailable) {
+                captureTempBuffer_.resize(channels);
+                for (auto& ch : captureTempBuffer_) {
+                    ch.resize(numFramesAvailable);
+                }
+            }
+
+            // Convert interleaved float32 from WASAPI to planar
+            float* pFloat = reinterpret_cast<float*>(pData);
+            for (UINT32 frame = 0; frame < numFramesAvailable; ++frame) {
+                for (int ch = 0; ch < channels; ++ch) {
+                    captureTempBuffer_[ch][frame] = pFloat[frame * channels + ch];
+                }
+            }
+
+            // Write to ring buffer (lock-free, no mutex needed)
+            std::vector<const float*> channelPtrs(channels);
+            for (int ch = 0; ch < channels; ++ch) {
+                channelPtrs[ch] = captureTempBuffer_[ch].data();
+            }
+
+            int framesWritten = captureRingBuffer_.write(channelPtrs.data(), numFramesAvailable);
+            if (framesWritten < static_cast<int>(numFramesAvailable)) {
+                // Ring buffer full - this is an overrun
+            }
+
+            // Update stats with mutex
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                framesCaptured_ += numFramesAvailable;
+            }
+        }
+
+        pCapture->ReleaseBuffer(numFramesAvailable);
+
+        // Check if we should trigger data-ready callback
+        int availableFrames = captureRingBuffer_.getAvailableRead();
+        if (availableFrames >= dataReadyThreshold_ && dataReadyCallback_) {
+            dataReadyCallback_();
+        }
+
+        std::this_thread::yield();
+    }
+
+    std::cerr << "[AIOCSession] Capture thread stopped\n";
+
+    if (threadOwnsCom) {
+        CoUninitialize();
+    }
+#endif
+}
+
+// v2.2: Background playback thread (ring buffer → AIOC speaker)
+void AIOCSession::playbackThreadFunc()
+{
+#ifdef _WIN32
+    // Initialize COM for this thread
+    HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    bool threadOwnsCom = SUCCEEDED(hr);
+
+    // Set thread priority to time-critical
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+
+    std::cerr << "[AIOCSession] Playback thread started\n";
+
+    while (playbackThreadRunning_.load(std::memory_order_acquire)) {
+        // v2.2 fix: Check state and get pointers with minimal mutex hold time
+        bool shouldSleep = false;
+        int sleepMs = 1;
+        IAudioClient* pClient = nullptr;
+        IAudioRenderClient* pRender = nullptr;
+        int channels = 0;
+
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (!running_ || !renderClient_) {
+                shouldSleep = true;
+                sleepMs = 10;
+            } else {
+                pClient = static_cast<IAudioClient*>(renderClient_);
+                pRender = static_cast<IAudioRenderClient*>(audioRender_);
+                channels = channels_;
+                if (!pClient || !pRender) {
+                    shouldSleep = true;
+                    sleepMs = 10;
+                }
+            }
+        }
+
+        // Sleep OUTSIDE mutex to avoid blocking writePlayback()
+        if (shouldSleep) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(sleepMs));
+            continue;
+        }
+
+        // WASAPI operations (these don't need our mutex - WASAPI is thread-safe)
+        UINT32 padding = 0;
+        hr = pClient->GetCurrentPadding(&padding);
+        if (FAILED(hr)) {
+            continue;
+        }
+
+        UINT32 bufferSize = 0;
+        hr = pClient->GetBufferSize(&bufferSize);
+        if (FAILED(hr)) {
+            continue;
+        }
+
+        // Target: keep buffer ~50% full, minimum write threshold 20%
+        UINT32 targetPadding = bufferSize / 2;
+        UINT32 minWriteThreshold = bufferSize / 5;
+
+        if (padding >= targetPadding) {
+            // Buffer is full enough - sleep outside mutex
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            continue;
+        }
+
+        UINT32 availableFrames = bufferSize - padding;
+        if (availableFrames < minWriteThreshold) {
+            // Not enough space - sleep outside mutex
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            continue;
+        }
+
+        // Check ring buffer (lock-free)
+        int ringBufferFrames = playbackRingBuffer_.getAvailableRead();
+        if (ringBufferFrames == 0) {
+            // No data - wait on CV (uses separate playbackMutex_)
+            std::unique_lock<std::mutex> cvLock(playbackMutex_);
+            playbackCV_.wait_for(cvLock, std::chrono::milliseconds(10));
+            continue;
+        }
+
+        // Write as much as we can
+        UINT32 framesToWrite = std::min(availableFrames, static_cast<UINT32>(ringBufferFrames));
+
+        // Allocate temp buffer if needed (thread-local)
+        if (playbackTempBuffer_.size() != static_cast<size_t>(channels) ||
+            playbackTempBuffer_[0].size() < framesToWrite) {
+            playbackTempBuffer_.resize(channels);
+            for (auto& ch : playbackTempBuffer_) {
+                ch.resize(framesToWrite);
+            }
+        }
+
+        // Read from ring buffer (lock-free)
+        std::vector<float*> channelPtrs(channels);
+        for (int ch = 0; ch < channels; ++ch) {
+            channelPtrs[ch] = playbackTempBuffer_[ch].data();
+        }
+
+        int framesRead = playbackRingBuffer_.read(channelPtrs.data(), framesToWrite);
+        if (framesRead > 0) {
+            BYTE* pData = nullptr;
+            hr = pRender->GetBuffer(framesRead, &pData);
+            if (SUCCEEDED(hr) && pData) {
+                float* pFloat = reinterpret_cast<float*>(pData);
+                for (int frame = 0; frame < framesRead; ++frame) {
+                    for (int ch = 0; ch < channels; ++ch) {
+                        pFloat[frame * channels + ch] = playbackTempBuffer_[ch][frame];
+                    }
+                }
+                pRender->ReleaseBuffer(framesRead, 0);
+
+                // Update stats with mutex
+                {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    framesPlayed_ += framesRead;
+                }
+            }
+        }
+
+        // Check if we should trigger space-available callback
+        int availableSpace = playbackRingBuffer_.getAvailableWrite();
+        if (availableSpace >= spaceAvailableThreshold_ && spaceAvailableCallback_) {
+            spaceAvailableCallback_();
+        }
+
+        std::this_thread::yield();
+    }
+
+    std::cerr << "[AIOCSession] Playback thread stopped\n";
+
+    if (threadOwnsCom) {
+        CoUninitialize();
+    }
+#endif
 }
 
 int AIOCSession::sampleRate() const { std::lock_guard<std::mutex> lock(mutex_); return sampleRate_; }
@@ -667,6 +930,86 @@ void AIOCSession::closeCdc()
         cdcHandle_ = nullptr;
     }
 #endif
+}
+
+// v2.2: WASAPI device enumeration implementation
+std::vector<WASAPIDeviceInfo> enumerateWASAPIDevices(int direction)
+{
+    std::vector<WASAPIDeviceInfo> devices;
+
+#ifdef _WIN32
+    // direction: 0 = eCapture (microphones), 1 = eRender (speakers)
+    EDataFlow dataFlow = static_cast<EDataFlow>((direction == 0) ? eCapture : eRender);
+
+    // Initialize COM (may already be initialized by Qt, that's OK)
+    HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    bool comInitialized = SUCCEEDED(hr);
+
+    // Create device enumerator
+    IMMDeviceEnumerator* enumerator = nullptr;
+    hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr,
+                          CLSCTX_ALL, __uuidof(IMMDeviceEnumerator),
+                          (void**)&enumerator);
+    if (FAILED(hr)) {
+        if (comInitialized) CoUninitialize();
+        return devices;
+    }
+
+    // Enumerate active audio endpoints
+    IMMDeviceCollection* collection = nullptr;
+    hr = enumerator->EnumAudioEndpoints(dataFlow, DEVICE_STATE_ACTIVE, &collection);
+    if (FAILED(hr)) {
+        enumerator->Release();
+        if (comInitialized) CoUninitialize();
+        return devices;
+    }
+
+    UINT count = 0;
+    collection->GetCount(&count);
+
+    for (UINT i = 0; i < count; ++i) {
+        IMMDevice* device = nullptr;
+        if (FAILED(collection->Item(i, &device))) continue;
+
+        // Get device ID (GUID string)
+        LPWSTR pwszID = nullptr;
+        device->GetId(&pwszID);
+        if (pwszID) {
+            std::wstring wid(pwszID);
+            std::string id = wstringToUtf8(wid);
+            CoTaskMemFree(pwszID);
+
+            // Get friendly name from property store
+            IPropertyStore* props = nullptr;
+            std::string friendlyName = "Unknown Device";
+            if (SUCCEEDED(device->OpenPropertyStore(STGM_READ, &props))) {
+                PROPVARIANT varName;
+                PropVariantInit(&varName);
+                if (SUCCEEDED(props->GetValue(PKEY_Device_FriendlyName, &varName))) {
+                    if (varName.pwszVal) {
+                        std::wstring wname(varName.pwszVal);
+                        friendlyName = wstringToUtf8(wname);
+                    }
+                    PropVariantClear(&varName);
+                }
+                props->Release();
+            }
+
+            WASAPIDeviceInfo info;
+            info.id = id;
+            info.friendlyName = friendlyName;
+            devices.push_back(info);
+        }
+
+        device->Release();
+    }
+
+    collection->Release();
+    enumerator->Release();
+    if (comInitialized) CoUninitialize();
+#endif
+
+    return devices;
 }
 
 } // namespace nda

@@ -52,6 +52,10 @@ private:
     void addSlider(const QString& label, const QString& key, int min, int max, int defaultVal);
     void addCheckbox(const QString& label, const QString& key);
     void addTextInput(const QString& label, const QString& key);
+
+    // v2.2: AIOC-specific UI helpers
+    void addAIOCDeviceSelector(const QString& label, const QString& key, int direction);
+    void addPTTModeSelector(const QString& label, const QString& key);
     
     void applyModernStyles();
     

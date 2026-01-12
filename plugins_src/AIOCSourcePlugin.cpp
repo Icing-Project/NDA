@@ -1,5 +1,6 @@
 #include "plugins/AudioSourcePlugin.h"
 #include "AIOCPluginCommon.h"
+#include <cstring>
 #include <iostream>
 
 namespace nda {
@@ -9,16 +10,16 @@ public:
     AIOCSourcePlugin()
         : state_(PluginState::Unloaded),
           sampleRate_(48000),
-          channels_(1),
+          channels_(2),  // v2.2: Output stereo (AIOC device is mono, we duplicate)
+          deviceChannels_(1),  // AIOC device is always mono
           bufferFrames_(512),
-          loopbackTest_(false)
+          loopbackTest_(false),
+          dataReadyThreshold_(512)
     {
-        // Lock to AIOC hardware endpoints by default (per-device IDs provided).
-        session_.setDeviceIds(
-            "{0D94B72A-8A15-4C85-B8F7-5AC442A88BFB}", // Microphone (AIOC Audio)
-            session_.deviceOutId());
+        // v2.2: Use default WASAPI capture device initially
+        // User can select specific AIOC device via PluginSidebar UI
         session_.setSampleRate(sampleRate_);
-        session_.setChannels(channels_);
+        session_.setChannels(deviceChannels_);  // Session uses device channels (mono)
         session_.setBufferFrames(bufferFrames_);
     }
 
@@ -34,7 +35,7 @@ public:
         }
         session_.enableLoopback(loopbackTest_);
         session_.setSampleRate(sampleRate_);
-        session_.setChannels(channels_);
+        session_.setChannels(deviceChannels_);  // Session uses device channels (mono)
         session_.setBufferFrames(bufferFrames_);
         state_ = PluginState::Initialized;
         return true;
@@ -90,7 +91,7 @@ public:
             session_.setSampleRate(sampleRate_);
         } else if (key == "channels") {
             channels_ = std::stoi(value);
-            session_.setChannels(channels_);
+            // Note: Session always uses deviceChannels_ (mono) - we duplicate to stereo in readAudio()
         } else if (key == "bufferFrames") {
             bufferFrames_ = std::stoi(value);
             session_.setBufferFrames(bufferFrames_);
@@ -133,24 +134,35 @@ public:
             return false;
         }
 
-        // Ensure buffer reflects configured channels/frames.
-        if (buffer.getChannelCount() != channels_ || buffer.getFrameCount() != bufferFrames_) {
-            buffer.resize(channels_, bufferFrames_);
+        // v2.2: AIOC device is mono - read into mono buffer first, then duplicate to stereo
+        // Resize mono buffer if needed
+        if (monoBuffer_.getChannelCount() != deviceChannels_ || monoBuffer_.getFrameCount() != bufferFrames_) {
+            monoBuffer_.resize(deviceChannels_, bufferFrames_);
         }
 
-        if (!session_.readCapture(buffer)) {
+        if (!session_.readCapture(monoBuffer_)) {
             buffer.clear();
             return false;
         }
 
-        // Apply mute/volume.
+        // Ensure output buffer is stereo
+        if (buffer.getChannelCount() != channels_ || buffer.getFrameCount() != bufferFrames_) {
+            buffer.resize(channels_, bufferFrames_);
+        }
+
+        // Duplicate mono to stereo (copy mono channel to all output channels)
+        const float* monoData = monoBuffer_.getChannelData(0);
+        for (int ch = 0; ch < channels_; ++ch) {
+            float* outData = buffer.getChannelData(ch);
+            std::memcpy(outData, monoData, bufferFrames_ * sizeof(float));
+        }
+
+        // Apply mute/volume to all channels
         if (session_.muteIn() || session_.volumeIn() != 1.0f) {
             float gain = session_.muteIn() ? 0.0f : session_.volumeIn();
-            int frames = buffer.getFrameCount();
-            int chans = buffer.getChannelCount();
-            for (int ch = 0; ch < chans; ++ch) {
+            for (int ch = 0; ch < channels_; ++ch) {
                 float* channelData = buffer.getChannelData(ch);
-                for (int i = 0; i < frames; ++i) {
+                for (int i = 0; i < bufferFrames_; ++i) {
                     channelData[i] *= gain;
                 }
             }
@@ -173,18 +185,38 @@ public:
     void setChannels(int channels) override {
         if (state_ == PluginState::Unloaded || state_ == PluginState::Initialized) {
             channels_ = channels;
-            session_.setChannels(channels_);
+            // Note: Session always uses deviceChannels_ (mono) - we duplicate to stereo in readAudio()
         }
+    }
+
+    // v2.2: Event-driven async mode support
+    bool supportsAsyncMode() const override {
+        return true;  // We use ring buffer + background thread
+    }
+
+    void setDataReadyCallback(DataReadyCallback callback) override {
+        dataReadyCallback_ = callback;
+        session_.setDataReadyCallback(callback);  // Propagate to AIOCSession
+    }
+
+    int getDataReadyThreshold() const override {
+        return dataReadyThreshold_;  // Default: 512 frames
     }
 
 private:
     PluginState state_;
     int sampleRate_;
-    int channels_;
+    int channels_;          // Output channels (stereo)
+    int deviceChannels_;    // Device channels (mono for AIOC)
     int bufferFrames_;
     bool loopbackTest_;
     AudioSourceCallback callback_;
     AIOCSession session_;
+    AudioBuffer monoBuffer_;  // v2.2: Temporary buffer for mono capture
+
+    // v2.2: Event-driven members
+    DataReadyCallback dataReadyCallback_;
+    int dataReadyThreshold_;
 };
 
 } // namespace nda

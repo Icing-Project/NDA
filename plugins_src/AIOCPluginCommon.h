@@ -1,9 +1,12 @@
 #pragma once
 
 #include "audio/AudioBuffer.h"
+#include "audio/RingBuffer.h"
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <deque>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -31,6 +34,17 @@ struct AIOCTelemetry
     uint64_t overruns{0};
     std::string lastMessage;
 };
+
+// v2.2: WASAPI device enumeration support
+struct WASAPIDeviceInfo
+{
+    std::string id;           // GUID string for setParameter("device_id")
+    std::string friendlyName; // Display name for UI
+};
+
+// Enumerate available WASAPI audio devices
+// direction: eCapture (microphones) or eRender (speakers)
+std::vector<WASAPIDeviceInfo> enumerateWASAPIDevices(int direction);
 
 class AIOCSession
 {
@@ -74,6 +88,12 @@ public:
     // Telemetry
     AIOCTelemetry getTelemetry() const;
 
+    // v2.2: Event-driven callbacks and ring buffer stats
+    void setDataReadyCallback(std::function<void()> callback);
+    void setSpaceAvailableCallback(std::function<void()> callback);
+    int getCaptureRingBufferAvailable() const;
+    int getPlaybackRingBufferAvailable() const;
+
     // Accessors
     int sampleRate() const;
     int channels() const;
@@ -105,6 +125,10 @@ private:
     void closeHid();
     void closeCdc();
 
+    // v2.2: Background thread functions
+    void captureThreadFunc();
+    void playbackThreadFunc();
+
     // State
     mutable std::mutex mutex_;
     int sampleRate_;
@@ -132,6 +156,30 @@ private:
     std::string deviceOutId_;
     std::string cdcPort_;
     std::string lastMessage_;
+
+    // v2.2: Ring buffers for async operation (200ms capacity at 48kHz = 9600 frames)
+    RingBuffer captureRingBuffer_;    // AIOC mic → host
+    RingBuffer playbackRingBuffer_;   // Host → AIOC speaker
+
+    // v2.2: Background threads (decouple WASAPI from plugin)
+    std::thread captureThread_;
+    std::thread playbackThread_;
+    std::atomic<bool> captureThreadRunning_;
+    std::atomic<bool> playbackThreadRunning_;
+
+    // v2.2: Event-driven callbacks
+    std::function<void()> dataReadyCallback_;
+    std::function<void()> spaceAvailableCallback_;
+    int dataReadyThreshold_;
+    int spaceAvailableThreshold_;
+
+    // v2.2: Condition variable for playback thread signaling
+    std::condition_variable playbackCV_;
+    std::mutex playbackMutex_;
+
+    // v2.2: Temporary conversion buffers (planar ↔ interleaved)
+    std::vector<std::vector<float>> captureTempBuffer_;
+    std::vector<std::vector<float>> playbackTempBuffer_;
 
     // Platform handles
     void* hidDevice_; // hidapi device handle

@@ -16,13 +16,12 @@ public:
           bufferFrames_(512),
           pttArmed_(false),
           pttMode_(AIOCPttMode::HidManual),
-          loopbackTest_(false)
+          loopbackTest_(false),
+          spaceAvailableThreshold_(512)
     {
-        // Lock to AIOC hardware endpoints by default (per-device IDs provided).
-        session_.setDeviceIds(
-            session_.deviceInId(),
-            "{DF6E2579-254F-44A3-AFD9-301BDD499759}"); // Speakers (AIOC Audio)
-        session_.setCdcPort("COM8"); // AIOC CDC port (COM8)
+        // v2.2: Use default WASAPI render device initially
+        // User can select specific AIOC device via PluginSidebar UI
+        // COM port will be set by user or auto-detected
         session_.setSampleRate(sampleRate_);
         session_.setChannels(channels_);
         session_.setBufferFrames(bufferFrames_);
@@ -196,7 +195,25 @@ public:
             session_.setBufferFrames(bufferFrames_);
         }
     }
-    int getAvailableSpace() const override { return bufferFrames_; }
+    int getAvailableSpace() const override {
+        if (state_ != PluginState::Running) return 0;
+        // v2.2: Return ring buffer space (not bufferFrames_)
+        return session_.getPlaybackRingBufferAvailable();
+    }
+
+    // v2.2: Event-driven async mode support
+    bool supportsAsyncMode() const override {
+        return true;  // Ring buffer + background thread
+    }
+
+    bool isNonBlocking() const override {
+        return true;  // writeAudio() writes to ring buffer, never blocks WASAPI
+    }
+
+    void setSpaceAvailableCallback(SpaceAvailableCallback callback) override {
+        spaceAvailableCallback_ = callback;
+        session_.setSpaceAvailableCallback(callback);  // Propagate to AIOCSession
+    }
 
 private:
     void handlePtt(const AudioBuffer& buffer) {
@@ -258,6 +275,10 @@ private:
     bool loopbackTest_;
     std::chrono::steady_clock::time_point lastVoice_;
     AIOCSession session_;
+
+    // v2.2: Event-driven members
+    SpaceAvailableCallback spaceAvailableCallback_;
+    int spaceAvailableThreshold_;
 };
 
 } // namespace nda

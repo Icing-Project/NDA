@@ -1,7 +1,11 @@
 #include "ui/PluginSidebar.h"
+#include "audio/WasapiDeviceEnum.h"
 #include <QScrollArea>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <algorithm>  // For std::transform
+#include <vector>
+#include <string>
 
 namespace nda {
 
@@ -118,9 +122,25 @@ void PluginSidebar::showPluginConfig(std::shared_ptr<BasePlugin> plugin)
     if (info.type == PluginType::AudioSink && info.name.find("File") != std::string::npos) {
         addFileSelector("Output File:", "output_path");
     }
-    
+
+    // v2.2: AIOC Sink specific UI
+    if (info.name.find("AIOC") != std::string::npos && info.type == PluginType::AudioSink) {
+        addAIOCDeviceSelector("AIOC Output Device:", "device_id", 1);  // 1 = eRender (speakers)
+        addPTTModeSelector("PTT Mode:", "ptt_mode");
+        addSlider("VPTT Threshold:", "vptt_threshold", 0, 32768, 64);
+        addSlider("VPTT Hang (ms):", "vptt_hang_ms", 0, 2000, 200);
+        addTextInput("CDC Port (auto-detect):", "cdc_port");
+    }
+
+    // v2.2: AIOC Source specific UI
+    if (info.name.find("AIOC") != std::string::npos && info.type == PluginType::AudioSource) {
+        addAIOCDeviceSelector("AIOC Input Device:", "device_id", 0);  // 0 = eCapture (microphones)
+        addSlider("VCOS Threshold:", "vcos_threshold", 0, 32768, 32);
+        addSlider("VCOS Hang (ms):", "vcos_hang_ms", 0, 2000, 200);
+    }
+
     contentLayout->addStretch();
-    
+
     show();
 }
 
@@ -224,26 +244,97 @@ void PluginSidebar::addTextInput(const QString& label, const QString& key)
 {
     QVBoxLayout *contentLayout = qobject_cast<QVBoxLayout*>(contentWidget_->layout());
     if (!contentLayout) return;
-    
+
     QLabel *labelWidget = new QLabel(label, this);
     labelWidget->setObjectName("paramLabel");
     contentLayout->addWidget(labelWidget);
-    
+
     QLineEdit *lineEdit = new QLineEdit(this);
     lineEdit->setObjectName("paramLineEdit");
     contentLayout->addWidget(lineEdit);
     parameterWidgets_[key.toStdString()] = lineEdit;
 }
 
+// v2.2: AIOC device selector with WASAPI enumeration
+void PluginSidebar::addAIOCDeviceSelector(const QString& label, const QString& key, int direction)
+{
+    QVBoxLayout *contentLayout = qobject_cast<QVBoxLayout*>(contentWidget_->layout());
+    if (!contentLayout) return;
+
+    QLabel *labelWidget = new QLabel(label, this);
+    labelWidget->setObjectName("paramLabel");
+    contentLayout->addWidget(labelWidget);
+
+    QComboBox *combo = new QComboBox(this);
+    combo->setObjectName("paramCombo");
+    combo->setMinimumHeight(35);
+
+    // Enumerate WASAPI devices
+    // direction: 0 = eCapture (microphones), 1 = eRender (speakers)
+    auto devices = enumerateWASAPIDevices(direction);
+
+    int aiocIndex = -1;
+    for (size_t i = 0; i < devices.size(); ++i) {
+        combo->addItem(QString::fromStdString(devices[i].friendlyName),
+                       QString::fromStdString(devices[i].id));
+
+        // Pre-select first device containing "aioc" (case-insensitive)
+        if (aiocIndex == -1) {
+            std::string name = devices[i].friendlyName;
+            std::transform(name.begin(), name.end(), name.begin(), ::tolower);
+            if (name.find("aioc") != std::string::npos) {
+                aiocIndex = static_cast<int>(i);
+            }
+        }
+    }
+
+    if (aiocIndex >= 0) {
+        combo->setCurrentIndex(aiocIndex);
+    }
+
+    contentLayout->addWidget(combo);
+    parameterWidgets_[key.toStdString()] = combo;
+}
+
+// v2.2: PTT mode selector for AIOC
+void PluginSidebar::addPTTModeSelector(const QString& label, const QString& key)
+{
+    QVBoxLayout *contentLayout = qobject_cast<QVBoxLayout*>(contentWidget_->layout());
+    if (!contentLayout) return;
+
+    QLabel *labelWidget = new QLabel(label, this);
+    labelWidget->setObjectName("paramLabel");
+    contentLayout->addWidget(labelWidget);
+
+    QComboBox *combo = new QComboBox(this);
+    combo->setObjectName("paramCombo");
+    combo->setMinimumHeight(35);
+
+    // PTT mode options with userData for parameter value
+    combo->addItem("HID Manual (Recommended)", "hid_manual");
+    combo->addItem("CDC Manual (COM Port)", "cdc_manual");
+    combo->addItem("VPTT Auto (Voice Activated)", "vptt_auto");
+
+    // Default to HID Manual (index 0)
+    combo->setCurrentIndex(0);
+
+    contentLayout->addWidget(combo);
+    parameterWidgets_[key.toStdString()] = combo;
+}
+
 void PluginSidebar::onApplyClicked()
 {
     if (!currentPlugin_) return;
-    
+
     for (const auto& [key, widget] : parameterWidgets_) {
         QString value;
-        
+
         if (auto* combo = qobject_cast<QComboBox*>(widget)) {
-            value = combo->currentText();
+            // v2.2: Prefer userData (device GUID, PTT mode string) over display text
+            value = combo->currentData().toString();
+            if (value.isEmpty()) {
+                value = combo->currentText();
+            }
         } else if (auto* slider = qobject_cast<QSlider*>(widget)) {
             value = QString::number(slider->value());
         } else if (auto* lineEdit = qobject_cast<QLineEdit*>(widget)) {
@@ -251,7 +342,7 @@ void PluginSidebar::onApplyClicked()
         } else if (auto* checkbox = qobject_cast<QCheckBox*>(widget)) {
             value = checkbox->isChecked() ? "true" : "false";
         }
-        
+
         currentPlugin_->setParameter(key, value.toStdString());
         emit parameterChanged(key, value.toStdString());
     }
