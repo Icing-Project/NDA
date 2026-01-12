@@ -231,8 +231,11 @@ bool AIOCSession::connect()
 
 void AIOCSession::disconnect()
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    // v2.2: Call stop() BEFORE locking to avoid recursive mutex deadlock
+    // stop() has its own locking - safe to call first
     stop();
+
+    std::lock_guard<std::mutex> lock(mutex_);
     closeAudioDevices();
     closeHid();
     closeCdc();

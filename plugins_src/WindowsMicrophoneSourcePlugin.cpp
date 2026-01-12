@@ -6,6 +6,7 @@
 #include <thread>
 #include <atomic>
 #include <chrono>
+#include <future>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -52,7 +53,8 @@ public:
     }
 
     ~WindowsMicrophoneSourcePlugin() override {
-        std::lock_guard<std::mutex> lock(mutex_);
+        // v2.2: Don't lock here - shutdown() handles its own locking
+        // Locking here + shutdown() locking = undefined behavior (recursive lock)
         if (state_ != PluginState::Unloaded) {
             shutdown();
         }
@@ -256,11 +258,12 @@ public:
     }
 
     void shutdown() override {
-        std::lock_guard<std::mutex> lock(mutex_);
+        // v2.2: Always call stop() BEFORE locking to avoid recursive mutex deadlock
+        // stop() has its own locking and state check - safe to call unconditionally
+        // This ensures threads are properly stopped before we release resources
+        stop();
 
-        if (state_ == PluginState::Running) {
-            stop();
-        }
+        std::lock_guard<std::mutex> lock(mutex_);
 
 #ifdef _WIN32
         // Release WASAPI resources
@@ -369,8 +372,17 @@ public:
         // Temporarily release mutex for thread join to avoid deadlock
         lock.unlock();
         if (captureThread_.joinable()) {
-            captureThread_.join();
-            std::cerr << "[WindowsMicrophone] Capture thread joined\n";
+            // v2.2: Use timed join to prevent hanging on unresponsive threads
+            auto joinFuture = std::async(std::launch::async, [this]() {
+                captureThread_.join();
+            });
+
+            if (joinFuture.wait_for(std::chrono::milliseconds(500)) == std::future_status::timeout) {
+                std::cerr << "[WindowsMicrophone] Capture thread join timeout (500ms) - detaching\n";
+                captureThread_.detach();
+            } else {
+                std::cerr << "[WindowsMicrophone] Capture thread joined\n";
+            }
         }
         lock.lock();
 

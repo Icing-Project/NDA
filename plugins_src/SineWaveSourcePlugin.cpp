@@ -23,7 +23,8 @@ public:
     }
 
     ~SineWaveSourcePlugin() override {
-        std::lock_guard<std::mutex> lock(mutex_);
+        // v2.2: Don't lock here - shutdown() handles its own locking
+        // Locking here + shutdown() locking = undefined behavior (recursive lock)
         if (state_ != PluginState::Unloaded) {
             shutdown();
         }
@@ -50,11 +51,11 @@ public:
     }
 
     void shutdown() override {
-        std::lock_guard<std::mutex> lock(mutex_);
+        // v2.2: Always call stop() BEFORE locking to avoid recursive mutex deadlock
+        // stop() has its own locking and state check - safe to call unconditionally
+        stop();
 
-        if (state_ == PluginState::Running) {
-            stop();
-        }
+        std::lock_guard<std::mutex> lock(mutex_);
 
         std::cerr << "[SineWaveSource] Shutdown: Generated " << framesGenerated_
                   << " frames across " << readCalls_ << " calls\n";

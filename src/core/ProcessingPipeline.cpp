@@ -471,6 +471,14 @@ bool ProcessingPipeline::initialize()
     std::cout << "[Pipeline] Source: " << source_->getInfo().name
               << " (state: " << static_cast<int>(sourceState) << ")" << std::endl;
 
+    // v2.2: Force shutdown if plugin is in Running/Error state (restart recovery)
+    if (sourceState == PluginState::Running || sourceState == PluginState::Error) {
+        std::cout << "[Pipeline] Source in " << (sourceState == PluginState::Running ? "Running" : "Error")
+                  << " state - forcing shutdown for restart" << std::endl;
+        source_->shutdown();
+        sourceState = source_->getState();
+    }
+
     if (sourceState == PluginState::Unloaded) {
         if (!source_->initialize()) {
             std::cerr << "[Pipeline] Source initialization failed" << std::endl;
@@ -487,6 +495,14 @@ bool ProcessingPipeline::initialize()
         std::cout << "[Pipeline] Processor: " << processor_->getInfo().name
                   << " (state: " << static_cast<int>(processorState) << ")" << std::endl;
 
+        // v2.2: Force shutdown if plugin is in Running/Error state (restart recovery)
+        if (processorState == PluginState::Running || processorState == PluginState::Error) {
+            std::cout << "[Pipeline] Processor in " << (processorState == PluginState::Running ? "Running" : "Error")
+                      << " state - forcing shutdown for restart" << std::endl;
+            processor_->shutdown();
+            processorState = processor_->getState();
+        }
+
         if (processorState == PluginState::Unloaded) {
             if (!processor_->initialize()) {
                 std::cerr << "[Pipeline] Processor initialization failed" << std::endl;
@@ -502,6 +518,14 @@ bool ProcessingPipeline::initialize()
     auto sinkState = sink_->getState();
     std::cout << "[Pipeline] Sink: " << sink_->getInfo().name
               << " (state: " << static_cast<int>(sinkState) << ")" << std::endl;
+
+    // v2.2: Force shutdown if plugin is in Running/Error state (restart recovery)
+    if (sinkState == PluginState::Running || sinkState == PluginState::Error) {
+        std::cout << "[Pipeline] Sink in " << (sinkState == PluginState::Running ? "Running" : "Error")
+                  << " state - forcing shutdown for restart" << std::endl;
+        sink_->shutdown();
+        sinkState = sink_->getState();
+    }
 
     if (sinkState == PluginState::Unloaded) {
         if (!sink_->initialize()) {
@@ -570,7 +594,11 @@ bool ProcessingPipeline::initialize()
     // Initialize work buffer
     const int sourceRate = source_->getSampleRate();
     const int sinkRate = sink_->getSampleRate();
-    const int channels = source_->getChannels();
+
+    // v2.2: Track source and sink channels for potential conversion
+    sourceChannels_ = source_->getChannels();
+    sinkChannels_ = sink_->getChannels();
+    const int channels = sourceChannels_;  // Internal processing uses source channels
 
     const int requestedFrames = std::max(64, frameCount_);
     source_->setBufferSize(requestedFrames);
@@ -607,6 +635,13 @@ bool ProcessingPipeline::initialize()
     }
 
     workBuffer_.resize(channels, frameCount_);
+
+    // v2.2: Setup channel conversion buffer if source/sink channels differ
+    if (sourceChannels_ != sinkChannels_) {
+        std::cout << "[Pipeline] Channel conversion enabled: " << sourceChannels_
+                  << "ch -> " << sinkChannels_ << "ch" << std::endl;
+        sinkBuffer_.resize(sinkChannels_, frameCount_);
+    }
 
     // Auto-configure resamplers if sample rates mismatch (v2.0 auto-fix)
     if (sourceRate == targetSampleRate_ && sinkRate == targetSampleRate_) {
@@ -1333,6 +1368,50 @@ void ProcessingPipeline::processAudioFrame()
 
     const int frameCount = workBuffer_.getFrameCount();
 
+    // v2.2: Channel conversion (mono->stereo or other conversions)
+    AudioBuffer* outputBuffer = &workBuffer_;
+    if (sourceChannels_ != sinkChannels_) {
+        // Mono to stereo: duplicate mono channel to L/R
+        if (sourceChannels_ == 1 && sinkChannels_ == 2) {
+            const float* mono = workBuffer_.getChannelData(0);
+            float* left = sinkBuffer_.getChannelData(0);
+            float* right = sinkBuffer_.getChannelData(1);
+
+            // v2.2: Verify buffers are valid before conversion
+            const int sinkFrames = sinkBuffer_.getFrameCount();
+            if (!mono || !left || !right) {
+                std::cerr << "[Pipeline] Channel conversion FAILED: null buffer pointer! "
+                          << "mono=" << (mono ? "ok" : "NULL")
+                          << " left=" << (left ? "ok" : "NULL")
+                          << " right=" << (right ? "ok" : "NULL")
+                          << " workBuffer=" << workBuffer_.getChannelCount() << "ch/" << workBuffer_.getFrameCount() << "f"
+                          << " sinkBuffer=" << sinkBuffer_.getChannelCount() << "ch/" << sinkBuffer_.getFrameCount() << "f"
+                          << std::endl;
+            } else if (frameCount > sinkFrames) {
+                std::cerr << "[Pipeline] Channel conversion FAILED: buffer size mismatch! "
+                          << "frameCount=" << frameCount << " > sinkBuffer frames=" << sinkFrames
+                          << std::endl;
+            } else {
+                for (int i = 0; i < frameCount; ++i) {
+                    left[i] = mono[i];
+                    right[i] = mono[i];
+                }
+                outputBuffer = &sinkBuffer_;
+            }
+        }
+        // Stereo to mono: average L/R
+        else if (sourceChannels_ == 2 && sinkChannels_ == 1) {
+            const float* left = workBuffer_.getChannelData(0);
+            const float* right = workBuffer_.getChannelData(1);
+            float* mono = sinkBuffer_.getChannelData(0);
+            for (int i = 0; i < frameCount; ++i) {
+                mono[i] = (left[i] + right[i]) * 0.5f;
+            }
+            outputBuffer = &sinkBuffer_;
+        }
+        // Other conversions: not implemented yet
+    }
+
     // 5/6. Backpressure + write (ZERO-LOSS MODE)
     // v2.1: Never drop audio - wait for sink with latency budget enforcement
     bool writeOk = false;
@@ -1364,9 +1443,10 @@ void ProcessingPipeline::processAudioFrame()
         }
 
         // Try to write (with exception safety)
+        // v2.2: Use outputBuffer (which may be sinkBuffer_ if channel conversion was applied)
         auto writeStart = std::chrono::steady_clock::now();
         writeOk = safePluginCall(sink_->getInfo().name.c_str(), "writeAudio",
-                                  [&]() { return sink_->writeAudio(workBuffer_); }, isRunning_);
+                                  [&]() { return sink_->writeAudio(*outputBuffer); }, isRunning_);
         sinkWriteUs += toMicros(std::chrono::steady_clock::now() - writeStart);
         if (profiling_) {
             profiling_->sinkWriteUs.add(toMicros(std::chrono::steady_clock::now() - writeStart));
@@ -1390,6 +1470,12 @@ void ProcessingPipeline::processAudioFrame()
                       << "ms latency budget after " << retryAttempts << " retries. "
                       << "Failing pipeline to prevent audio corruption." << std::endl;
             isRunning_.store(false);  // Stop pipeline
+
+            // v2.2: Force shutdown to release all resources and stop threads
+            if (source_) source_->shutdown();
+            if (processor_) processor_->shutdown();
+            if (sink_) sink_->shutdown();
+
             if (profiling_) {
                 profiling_->frameUs.add(toMicros(std::chrono::steady_clock::now() - frameStart));
             }
@@ -1427,6 +1513,11 @@ void ProcessingPipeline::processAudioFrame()
         std::cerr << "[Pipeline] CRITICAL: Sink write failed after " << maxRetries
                   << " retries. Failing pipeline." << std::endl;
         isRunning_.store(false);
+
+        // v2.2: Force shutdown to release all resources and stop threads
+        if (source_) source_->shutdown();
+        if (processor_) processor_->shutdown();
+        if (sink_) sink_->shutdown();
         if (profiling_) {
             profiling_->sinkWriteFailures++;
             profiling_->frameUs.add(toMicros(std::chrono::steady_clock::now() - frameStart));
