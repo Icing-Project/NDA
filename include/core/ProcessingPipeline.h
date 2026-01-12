@@ -137,9 +137,14 @@ private:
     std::unique_ptr<std::thread> processingThread_;
 
     AudioBuffer workBuffer_;
+    AudioBuffer sinkBuffer_;  // v2.2: For channel conversion (mono→stereo)
     int frameCount_;
     uint64_t processedSamples_;
-    
+
+    // v2.2: Channel conversion support
+    int sourceChannels_ = 0;
+    int sinkChannels_ = 0;
+
     // Sample rate adaptation (v2.0)
     int targetSampleRate_;        // Pipeline internal rate (48000 default)
     Resampler sourceResampler_;   // Source rate → 48kHz
