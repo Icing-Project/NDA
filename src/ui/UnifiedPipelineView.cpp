@@ -6,6 +6,7 @@
 #include <QMessageBox>
 #include <QSplitter>
 #include <QVBoxLayout>
+#include <algorithm>
 #include <iostream>
 
 namespace nda {
@@ -17,6 +18,9 @@ UnifiedPipelineView::UnifiedPipelineView(QWidget *parent)
 {
     setupUI();
     applyModernStyles();
+
+    // Enable keyboard input for PTT (T and Space keys)
+    setFocusPolicy(Qt::StrongFocus);
 
     // Setup metrics timer (60 FPS)
     metricsTimer_ = new QTimer(this);
@@ -620,6 +624,9 @@ void UnifiedPipelineView::updateTXStatus()
 
     startBothButton_->setEnabled(bothReady && !bothRunning);
     stopBothButton_->setEnabled(bothRunning);
+
+    // Update PTT button state (enabled only for AIOC sink)
+    updatePTTButtonState();
 }
 
 void UnifiedPipelineView::updateRXStatus()
@@ -682,6 +689,12 @@ void UnifiedPipelineView::onStopTXClicked()
     if (!txPipeline_) return;
 
     txPipeline_->stop();
+
+    // Force PTT release when stopping TX pipeline
+    if (pttActive_) {
+        onPTTReleased();
+    }
+
     stopTXButton_->setEnabled(false);
     updateTXStatus();  // This will properly set startTXButton state
     emit txPipelineStopped();
@@ -864,17 +877,9 @@ void UnifiedPipelineView::onPTTPressed()
     pttButton_->style()->unpolish(pttButton_);
     pttButton_->style()->polish(pttButton_);
 
-    // If TX source plugin supports PTT, trigger it
-    if (txSource_) {
-        std::string supportsPTT = txSource_->getParameter("supports_ptt");
-        if (supportsPTT == "true") {
-            txSource_->setParameter("ptt_active", "true");
-        } else {
-            // Fallback: Unmute audio at pipeline level
-            if (txPipeline_ && txPipeline_->isRunning()) {
-                // Pipeline mute/unmute would be implemented here
-            }
-        }
+    // CORRECTED: Target TX Sink (AIOC Sink owns PTT control)
+    if (txSink_ && isAIOCSink(txSink_)) {
+        txSink_->setParameter("ptt_state", "true");
     }
 }
 
@@ -885,17 +890,9 @@ void UnifiedPipelineView::onPTTReleased()
     pttButton_->style()->unpolish(pttButton_);
     pttButton_->style()->polish(pttButton_);
 
-    // If TX source plugin supports PTT, release it
-    if (txSource_) {
-        std::string supportsPTT = txSource_->getParameter("supports_ptt");
-        if (supportsPTT == "true") {
-            txSource_->setParameter("ptt_active", "false");
-        } else {
-            // Fallback: Mute audio at pipeline level
-            if (txPipeline_ && txPipeline_->isRunning()) {
-                // Pipeline mute/unmute would be implemented here
-            }
-        }
+    // CORRECTED: Target TX Sink (AIOC Sink owns PTT control)
+    if (txSink_ && isAIOCSink(txSink_)) {
+        txSink_->setParameter("ptt_state", "false");
     }
 }
 
@@ -1014,6 +1011,82 @@ void UnifiedPipelineView::onPluginFocused(const std::string& pluginName, PluginT
 {
     // Handle plugin focus for showing configuration sidebar
     // This would be called when user clicks on a dropdown
+}
+
+// Keyboard event handlers for PTT (T and Space keys)
+void UnifiedPipelineView::keyPressEvent(QKeyEvent* event)
+{
+    // CRITICAL: Prevent OS key repeat from triggering multiple PTT press/release cycles
+    if (event->isAutoRepeat()) {
+        event->accept();
+        return;
+    }
+
+    // PTT keys: T and Space
+    if ((event->key() == Qt::Key_T || event->key() == Qt::Key_Space)
+        && pttButton_->isEnabled()) {
+        onPTTPressed();
+        event->accept();
+        return;
+    }
+
+    event->ignore();  // Let parent handle unprocessed keys
+}
+
+void UnifiedPipelineView::keyReleaseEvent(QKeyEvent* event)
+{
+    if (event->isAutoRepeat()) {
+        event->accept();
+        return;
+    }
+
+    if ((event->key() == Qt::Key_T || event->key() == Qt::Key_Space)
+        && pttActive_) {
+        onPTTReleased();
+        event->accept();
+        return;
+    }
+
+    event->ignore();
+}
+
+void UnifiedPipelineView::focusOutEvent(QFocusEvent* event)
+{
+    // CRITICAL: Force PTT release if focus lost while PTT held
+    // (User won't receive keyReleaseEvent if they Alt-Tab while holding PTT)
+    if (pttActive_) {
+        onPTTReleased();
+    }
+    QWidget::focusOutEvent(event);
+}
+
+// Helper: Detect if sink is AIOC-related
+bool UnifiedPipelineView::isAIOCSink(std::shared_ptr<AudioSinkPlugin> sink) const
+{
+    if (!sink) return false;
+
+    auto info = sink->getInfo();
+    std::string name = info.name;
+
+    // Case-insensitive check for "AIOC"
+    std::transform(name.begin(), name.end(), name.begin(), ::tolower);
+    return name.find("aioc") != std::string::npos;
+}
+
+// Update PTT button state based on selected TX sink
+void UnifiedPipelineView::updatePTTButtonState()
+{
+    bool isAIOC = isAIOCSink(txSink_);
+
+    pttButton_->setEnabled(isAIOC);
+    pttButton_->setToolTip(isAIOC ?
+        "Push-to-Talk (Hold T or Space)" :
+        "PTT only available with AIOC Sink");
+
+    // Force release if disabled while active
+    if (!isAIOC && pttActive_) {
+        onPTTReleased();
+    }
 }
 
 void UnifiedPipelineView::applyModernStyles()
@@ -1148,6 +1221,12 @@ void UnifiedPipelineView::applyModernStyles()
             background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
                                       stop:0 #10b981,
                                       stop:1 #059669);
+        }
+
+        #pttButton:disabled {
+            background-color: #334155;
+            color: #64748b;
+            opacity: 0.5;
         }
 
         #stopButton {
