@@ -15,6 +15,7 @@ public:
           channels_(1),
           bufferFrames_(512),
           pttArmed_(false),
+          lastPttSent_(false),
           pttMode_(AIOCPttMode::HidManual),
           loopbackTest_(false),
           spaceAvailableThreshold_(512)
@@ -120,7 +121,22 @@ public:
             }
             session_.setPttMode(pttMode_);
         } else if (key == "device_id") {
+            std::string oldId = session_.deviceOutId();
+            std::cerr << "[AIOCSink] setParameter device_id: '" << value << "' (old: '" << oldId
+                      << "', state: " << static_cast<int>(state_) << ")" << std::endl;
             session_.setDeviceIds(session_.deviceInId(), value);
+            // v2.2: Reconnect to new device if currently running
+            if (state_ == PluginState::Running && value != oldId && !value.empty()) {
+                std::cerr << "[AIOCSink] Device changed while running, reconnecting..." << std::endl;
+                session_.stop();
+                session_.disconnect();
+                if (session_.connect() && session_.start()) {
+                    std::cerr << "[AIOCSink] Successfully switched to new device" << std::endl;
+                } else {
+                    std::cerr << "[AIOCSink] Failed to switch device" << std::endl;
+                    state_ = PluginState::Error;
+                }
+            }
         } else if (key == "cdc_port") {
             session_.setCdcPort(value);
         } else if (key == "vptt_threshold") {
@@ -216,6 +232,14 @@ public:
     }
 
 private:
+    // v2.2: Only send PTT state to HID when it actually changes
+    void sendPttIfChanged(bool newState) {
+        if (newState != lastPttSent_) {
+            lastPttSent_ = newState;
+            session_.setPttState(newState);
+        }
+    }
+
     void handlePtt(const AudioBuffer& buffer) {
         if (pttMode_ == AIOCPttMode::VpttAuto) {
             auto now = std::chrono::steady_clock::now();
@@ -223,24 +247,25 @@ private:
             float threshold = static_cast<float>(session_.vpttThreshold()) / 32768.0f;
 
             if (peak >= threshold) {
-                session_.setPttState(true);
+                sendPttIfChanged(true);
                 lastVoice_ = now;
                 return;
             }
 
             if (session_.vpttHangMs() == 0) {
-                session_.setPttState(false);
+                sendPttIfChanged(false);
                 return;
             }
 
             if (session_.isPttAsserted()) {
                 auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastVoice_).count();
                 if (elapsed > session_.vpttHangMs()) {
-                    session_.setPttState(false);
+                    sendPttIfChanged(false);
                 }
             }
         } else {
-            session_.setPttState(pttArmed_);
+            // Manual PTT mode - only send when state changes
+            sendPttIfChanged(pttArmed_);
         }
     }
 
@@ -271,6 +296,7 @@ private:
     int channels_;
     int bufferFrames_;
     bool pttArmed_;
+    bool lastPttSent_;  // v2.2: Track last PTT state sent to HID to avoid spam
     AIOCPttMode pttMode_;
     bool loopbackTest_;
     std::chrono::steady_clock::time_point lastVoice_;
