@@ -100,7 +100,20 @@ public:
         } else if (key == "mute_in") {
             session_.setMuteIn(value == "true" || value == "1");
         } else if (key == "device_id") {
+            std::string oldId = session_.deviceInId();
             session_.setDeviceIds(value, session_.deviceOutId());
+            // v2.2: Reconnect to new device if currently running
+            if (state_ == PluginState::Running && value != oldId && !value.empty()) {
+                std::cerr << "[AIOCSource] Device changed, reconnecting to: " << value << std::endl;
+                session_.stop();
+                session_.disconnect();
+                if (session_.connect() && session_.start()) {
+                    std::cerr << "[AIOCSource] Successfully switched to new device" << std::endl;
+                } else {
+                    std::cerr << "[AIOCSource] Failed to switch device" << std::endl;
+                    state_ = PluginState::Error;
+                }
+            }
         } else if (key == "loopback_test") {
             loopbackTest_ = (value == "true" || value == "1");
             session_.enableLoopback(loopbackTest_);

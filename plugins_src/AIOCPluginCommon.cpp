@@ -169,6 +169,8 @@ bool AIOCSession::connect()
 
 #ifdef _WIN32
     // HID open (VID/PID match)
+    std::cerr << "[AIOCSession] Searching for AIOC HID device (VID:0x"
+              << std::hex << kDefaultVid << " PID:0x" << kDefaultPid << std::dec << ")..." << std::endl;
     GUID hidGuid;
     HidD_GetHidGuid(&hidGuid);
     HDEVINFO deviceInfo = SetupDiGetClassDevs(&hidGuid, nullptr, nullptr, DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
@@ -195,6 +197,7 @@ bool AIOCSession::connect()
             attrs.Size = sizeof(attrs);
             if (HidD_GetAttributes(h, &attrs) && attrs.VendorID == kDefaultVid && attrs.ProductID == kDefaultPid) {
                 hidDevice_ = h;
+                std::cerr << "[AIOCSession] Found AIOC HID device!" << std::endl;
                 break;
             }
 
@@ -202,17 +205,24 @@ bool AIOCSession::connect()
         }
         SetupDiDestroyDeviceInfoList(deviceInfo);
     }
+
+    if (!hidDevice_) {
+        std::cerr << "[AIOCSession] WARNING: AIOC HID device not found - PTT will not work in HID mode" << std::endl;
+    }
 #endif
 
     // CDC open (optional, requires port set)
 #ifdef _WIN32
     if (!cdcPort_.empty()) {
+        std::cerr << "[AIOCSession] Opening CDC port: " << cdcPort_ << std::endl;
         std::wstring path = L"\\\\.\\" + std::wstring(cdcPort_.begin(), cdcPort_.end());
         HANDLE h = CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
         if (h != INVALID_HANDLE_VALUE) {
             cdcHandle_ = h;
+            std::cerr << "[AIOCSession] CDC port opened successfully" << std::endl;
         } else {
             lastMessage_ = "CDC open failed";
+            std::cerr << "[AIOCSession] Failed to open CDC port: " << cdcPort_ << std::endl;
         }
     }
 #endif
@@ -335,14 +345,44 @@ bool AIOCSession::setPttState(bool asserted)
     pttAsserted_ = asserted;
 
 #ifdef _WIN32
-    if (pttMode_ == AIOCPttMode::HidManual && hidDevice_) {
-        BYTE report[4] = {0};
-        report[0] = asserted ? 0x01 : 0x00;
+    if (pttMode_ == AIOCPttMode::HidManual) {
+        if (!hidDevice_) {
+            lastMessage_ = "PTT failed: HID device not connected";
+            std::cerr << "[AIOCSession] PTT failed: HID device not connected" << std::endl;
+            return false;
+        }
+        // v2.2: Fixed HID report format to match aioc-util protocol
+        // AIOC expects CM108-style GPIO control:
+        //   Byte 0: Report ID (0x00)
+        //   Byte 1: Control byte (upper bits must be 0)
+        //   Byte 2: GPIO data (CM108 GPIO3 = 0x04 for PTT1)
+        //   Byte 3: GPIO mask (which GPIO bits to affect)
+        //   Byte 4: Reserved
+        // PTT1 uses CM108 GPIO3 (bit 2 = 0x04) per aioc-util PTTChannel.PTT1 = 3
+        constexpr BYTE PTT1_GPIO_MASK = 0x04;  // CM108 GPIO3 (1 << 2)
+        BYTE report[5] = {0};
+        report[0] = 0x00;  // Report ID
+        report[1] = 0x00;  // Control byte (firmware checks & 0xC0 == 0)
+        report[2] = asserted ? PTT1_GPIO_MASK : 0x00;  // GPIO data
+        report[3] = PTT1_GPIO_MASK;  // GPIO mask
+        report[4] = 0x00;  // Reserved
         DWORD written = 0;
-        WriteFile(static_cast<HANDLE>(hidDevice_), report, sizeof(report), &written, nullptr);
+        BOOL success = WriteFile(static_cast<HANDLE>(hidDevice_), report, sizeof(report), &written, nullptr);
+        if (!success || written != sizeof(report)) {
+            DWORD err = GetLastError();
+            lastMessage_ = "PTT HID write failed (error " + std::to_string(err) + ")";
+            std::cerr << "[AIOCSession] PTT HID write failed: error " << err << std::endl;
+            return false;
+        }
+        std::cerr << "[AIOCSession] PTT " << (asserted ? "asserted" : "released") << " via HID" << std::endl;
     }
 
-    if (pttMode_ == AIOCPttMode::CdcManual && cdcHandle_) {
+    if (pttMode_ == AIOCPttMode::CdcManual) {
+        if (!cdcHandle_) {
+            lastMessage_ = "PTT failed: CDC port not connected";
+            std::cerr << "[AIOCSession] PTT failed: CDC port not connected" << std::endl;
+            return false;
+        }
         if (asserted) {
             EscapeCommFunction(static_cast<HANDLE>(cdcHandle_), SETDTR);
             EscapeCommFunction(static_cast<HANDLE>(cdcHandle_), CLRRTS);
@@ -350,6 +390,7 @@ bool AIOCSession::setPttState(bool asserted)
             EscapeCommFunction(static_cast<HANDLE>(cdcHandle_), CLRDTR);
             EscapeCommFunction(static_cast<HANDLE>(cdcHandle_), CLRRTS);
         }
+        std::cerr << "[AIOCSession] PTT " << (asserted ? "asserted" : "released") << " via CDC" << std::endl;
     }
 #endif
 
@@ -823,13 +864,23 @@ bool AIOCSession::initRenderClient()
     if (FAILED(hr) || !enumerator) return false;
 
     if (!deviceOutId_.empty()) {
+        std::cerr << "[AIOCSession] Opening render device by ID: " << deviceOutId_ << std::endl;
         std::wstring wid(deviceOutId_.begin(), deviceOutId_.end());
         hr = enumerator->GetDevice(wid.c_str(), &device);
+        if (FAILED(hr)) {
+            std::cerr << "[AIOCSession] Failed to open device by ID (hr=0x" << std::hex << hr << std::dec
+                      << "), falling back to default" << std::endl;
+            hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &device);
+        }
     } else {
+        std::cerr << "[AIOCSession] Opening DEFAULT render device (no device_id specified)" << std::endl;
         hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &device);
     }
     enumerator->Release();
-    if (FAILED(hr) || !device) return false;
+    if (FAILED(hr) || !device) {
+        std::cerr << "[AIOCSession] Failed to get render device" << std::endl;
+        return false;
+    }
 
     hr = device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, &renderClient_);
     device->Release();
