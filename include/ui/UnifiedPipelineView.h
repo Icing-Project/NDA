@@ -72,9 +72,7 @@ private slots:
 
     // Metrics update
     void updateMetrics();
-    
-    // Plugin configuration
-    void onPluginFocused(const std::string& pluginName, PluginType type);
+    // v2.2: Removed dead onPluginFocused slot
 
 protected:
     // Keyboard input for PTT (T and Space keys)
@@ -146,7 +144,7 @@ private:
     QPushButton *bridgeModeButton_;  // v2.1: One-click Bridge Mode setup
     QPushButton *startBothButton_;
     QPushButton *stopBothButton_;
-    QPushButton *settingsButton_;
+    // v2.2: Removed dead settingsButton_
 
     // Bridge Mode state (v2.1)
     bool bridgeModeActive_;

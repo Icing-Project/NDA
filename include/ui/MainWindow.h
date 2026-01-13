@@ -32,7 +32,7 @@ private slots:
     void onTXPipelineStopped();
     void onRXPipelineStarted();
     void onRXPipelineStopped();
-    void onStatusUpdate(const QString &message);
+    // v2.2: Removed dead onStatusUpdate slot
 
 private:
     void setupUI();

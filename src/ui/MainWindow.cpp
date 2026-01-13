@@ -92,10 +92,7 @@ void MainWindow::onRXPipelineStopped()
     statusBar()->showMessage("RX Pipeline Stopped");
 }
 
-void MainWindow::onStatusUpdate(const QString &message)
-{
-    statusBar()->showMessage(message);
-}
+// v2.2: Removed dead onStatusUpdate slot
 
 void MainWindow::autoLoadPlugins()
 {

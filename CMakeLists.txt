@@ -147,11 +147,7 @@ set(SOURCES
     src/ui/MainWindow.cpp
     src/ui/UnifiedPipelineView.cpp
     src/ui/PluginSidebar.cpp
-    src/ui/AudioDevicesView.cpp
-    src/ui/EncryptionView.cpp
-    src/ui/PluginsView.cpp
-    src/ui/SettingsView.cpp
-    # DELETED: Dashboard.cpp, PipelineView.cpp (merged into UnifiedPipelineView)
+    # v2.2: Removed dead UI views (AudioDevicesView, EncryptionView, PluginsView, SettingsView)
     src/audio/AudioEngine.cpp
     src/audio/AudioDevice.cpp
     src/audio/Resampler.cpp
@@ -171,11 +167,7 @@ set(HEADERS
     include/ui/MainWindow.h
     include/ui/UnifiedPipelineView.h
     include/ui/PluginSidebar.h
-    include/ui/AudioDevicesView.h
-    include/ui/EncryptionView.h
-    include/ui/PluginsView.h
-    include/ui/SettingsView.h
-    # DELETED: Dashboard.h, PipelineView.h (merged into UnifiedPipelineView)
+    # v2.2: Removed dead UI views (see SOURCES comment)
     include/audio/AudioEngine.h
     include/audio/AudioDevice.h
     include/audio/AudioBuffer.h

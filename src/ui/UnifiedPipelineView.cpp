@@ -413,13 +413,7 @@ void UnifiedPipelineView::createControlBar(QVBoxLayout* layout)
     controlLayout->addWidget(stopBothButton_);
 
     controlLayout->addStretch();
-
-    // Settings button
-    settingsButton_ = new QPushButton("📁 Settings", this);
-    settingsButton_->setObjectName("secondaryButton");
-    settingsButton_->setMinimumHeight(50);
-    settingsButton_->setMinimumWidth(120);
-    controlLayout->addWidget(settingsButton_);
+    // v2.2: Removed dead settingsButton_ (was never connected)
 
     layout->addWidget(controlCard);
 }
@@ -1007,11 +1001,7 @@ void UnifiedPipelineView::updateMetrics()
     }
 }
 
-void UnifiedPipelineView::onPluginFocused(const std::string& pluginName, PluginType type)
-{
-    // Handle plugin focus for showing configuration sidebar
-    // This would be called when user clicks on a dropdown
-}
+// v2.2: Removed dead onPluginFocused() method
 
 // Keyboard event handlers for PTT (T and Space keys)
 void UnifiedPipelineView::keyPressEvent(QKeyEvent* event)
