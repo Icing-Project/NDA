@@ -10,9 +10,11 @@
 #include <QPushButton>
 #include <QCheckBox>
 #include <QFileDialog>
+#include <QPointer>
 #include "plugins/BasePlugin.h"
 #include <memory>
 #include <map>
+#include <mutex>
 
 namespace nda {
 
@@ -38,6 +40,7 @@ public:
     void showPluginConfig(std::shared_ptr<BasePlugin> plugin);
 
 signals:
+    void aboutToApplyParameters();  // Emitted before parameters are applied
     void parameterChanged(const std::string& key, const std::string& value);
 
 private slots:
@@ -58,17 +61,32 @@ private:
     void addPTTModeSelector(const QString& label, const QString& key);
     
     void applyModernStyles();
-    
+
+    // RAII guard for exception-safe isUpdating_ management
+    class UpdateGuard {
+    public:
+        UpdateGuard(bool& flag) : flag_(flag) { flag_ = true; }
+        ~UpdateGuard() { flag_ = false; }  // Always resets, even on exception
+    private:
+        bool& flag_;
+    };
+
     std::shared_ptr<BasePlugin> currentPlugin_;
-    
+
     QVBoxLayout *mainLayout_;
     QWidget *contentWidget_;
     QLabel *pluginNameLabel_;
     QPushButton *applyButton_;
     QPushButton *resetButton_;
-    
+
     // Parameter widgets (key -> widget)
     std::map<std::string, QWidget*> parameterWidgets_;
+
+    // Re-entrancy guard to prevent concurrent showPluginConfig() calls
+    bool isUpdating_;
+
+    // Mutex to protect currentPlugin_ and parameterWidgets_ from concurrent access
+    std::mutex stateMutex_;
 };
 
 } // namespace nda

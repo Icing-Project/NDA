@@ -37,8 +37,11 @@ public:
     void setPluginManager(std::shared_ptr<PluginManager> manager);
     void setTXPipeline(std::shared_ptr<ProcessingPipeline> pipeline);
     void setRXPipeline(std::shared_ptr<ProcessingPipeline> pipeline);
-    
+
     void refreshPluginLists();
+
+    // Cancel any pending plugin selection changes (called before Apply)
+    void cancelPendingPluginChange();
 
 signals:
     void txPipelineStarted();
@@ -162,9 +165,35 @@ private:
     
     // Metrics timer (60 FPS)
     QTimer *metricsTimer_;
-    
+
     // PTT state
     bool pttActive_;
+
+    // Debounce timer for plugin selection (v2.2 stability fix)
+    QTimer *pluginSelectionDebounceTimer_;
+    enum class PendingPluginChange {
+        None,
+        TXSource,
+        TXProcessor,
+        TXSink,
+        RXSource,
+        RXProcessor,
+        RXSink
+    };
+    PendingPluginChange pendingChange_;
+    int pendingIndex_;
+
+    // Batch update mode - bypasses debouncing for programmatic plugin changes
+    bool batchUpdateMode_;
+
+    // Process debounced plugin changes
+    void processPendingPluginChange();
+    void processTXSourceChange(int index);
+    void processTXProcessorChange(int index);
+    void processTXSinkChange(int index);
+    void processRXSourceChange(int index);
+    void processRXProcessorChange(int index);
+    void processRXSinkChange(int index);
 };
 
 } // namespace nda

@@ -4,6 +4,7 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QMessageBox>
+#include <QSignalBlocker>
 #include <QSplitter>
 #include <QVBoxLayout>
 #include <algorithm>
@@ -15,6 +16,9 @@ UnifiedPipelineView::UnifiedPipelineView(QWidget *parent)
     : QWidget(parent)
     , pttActive_(false)
     , bridgeModeActive_(false)  // v2.1: Bridge Mode initially off
+    , pendingChange_(PendingPluginChange::None)  // v2.2: Initialize debounce state
+    , pendingIndex_(-1)
+    , batchUpdateMode_(false)  // v2.2: Batch mode off by default
 {
     setupUI();
     applyModernStyles();
@@ -26,6 +30,13 @@ UnifiedPipelineView::UnifiedPipelineView(QWidget *parent)
     metricsTimer_ = new QTimer(this);
     connect(metricsTimer_, &QTimer::timeout, this, &UnifiedPipelineView::updateMetrics);
     metricsTimer_->start(16); // ~60 FPS
+
+    // Setup debounce timer for plugin selection (50ms delay) - v2.2 stability fix
+    pluginSelectionDebounceTimer_ = new QTimer(this);
+    pluginSelectionDebounceTimer_->setSingleShot(true);
+    pluginSelectionDebounceTimer_->setInterval(50);
+    connect(pluginSelectionDebounceTimer_, &QTimer::timeout,
+            this, &UnifiedPipelineView::processPendingPluginChange);
 }
 
 UnifiedPipelineView::~UnifiedPipelineView()
@@ -72,6 +83,10 @@ void UnifiedPipelineView::setupUI()
     // Plugin sidebar
     pluginSidebar_ = new PluginSidebar(this);
     pluginSidebar_->hide();
+
+    // Connect sidebar's aboutToApply signal to cancel pending plugin changes
+    connect(pluginSidebar_, &PluginSidebar::aboutToApplyParameters,
+            this, &UnifiedPipelineView::cancelPendingPluginChange);
 
     // Add to splitter for resizable sidebar
     QSplitter *splitter = new QSplitter(Qt::Horizontal, this);
@@ -380,18 +395,17 @@ void UnifiedPipelineView::createControlBar(QVBoxLayout* layout)
     QHBoxLayout *controlLayout = new QHBoxLayout(controlCard);
     controlLayout->setSpacing(15);
 
-    // v2.1: Bridge Mode preset button
-    bridgeModeButton_ = new QPushButton("🛡️ Configure Bridge Mode", this);
+    // v2.2: Radio Mode - one-click AIOC radio setup
+    bridgeModeButton_ = new QPushButton("📻 Radio Mode", this);
     bridgeModeButton_->setObjectName("bridgeModeButton");
     bridgeModeButton_->setMinimumHeight(50);
-    bridgeModeButton_->setMinimumWidth(200);
+    bridgeModeButton_->setMinimumWidth(160);
     bridgeModeButton_->setStyleSheet("font-weight: bold; background-color: #4CAF50; color: white;");
     bridgeModeButton_->setToolTip(
-        "One-click setup for stable Windows ⇄ AIOC bridge:\n"
-        "• Forces 48kHz on all devices\n"
-        "• Disables processors (passthrough audio)\n"
-        "• Optimizes timing for stability\n"
-        "• Configures both TX and RX pipelines"
+        "One-click AIOC radio setup:\n"
+        "• TX: Windows Mic → AIOC PTT Sink\n"
+        "• RX: AIOC Source → Windows Speaker\n"
+        "• Processors disabled (passthrough)"
     );
     connect(bridgeModeButton_, &QPushButton::clicked, this, &UnifiedPipelineView::onBridgeModeClicked);
     controlLayout->addWidget(bridgeModeButton_);
@@ -439,6 +453,13 @@ QProgressBar* UnifiedPipelineView::createAudioMeter()
     return meter;
 }
 
+void UnifiedPipelineView::cancelPendingPluginChange()
+{
+    // Stop debounce timer and clear pending change
+    pluginSelectionDebounceTimer_->stop();
+    pendingChange_ = PendingPluginChange::None;
+}
+
 void UnifiedPipelineView::refreshPluginLists()
 {
     if (!pluginManager_) return;
@@ -481,7 +502,108 @@ void UnifiedPipelineView::refreshPluginLists()
     }
 }
 
+// v2.2: Debounced signal handlers - check batch mode to bypass debouncing
 void UnifiedPipelineView::onTXSourceChanged(int index)
+{
+    if (batchUpdateMode_) {
+        // Batch mode: immediate processing, no debouncing
+        processTXSourceChange(index);
+    } else {
+        // Normal mode: debounced processing
+        pendingChange_ = PendingPluginChange::TXSource;
+        pendingIndex_ = index;
+        pluginSelectionDebounceTimer_->start();
+    }
+}
+
+void UnifiedPipelineView::onTXProcessorChanged(int index)
+{
+    if (batchUpdateMode_) {
+        processTXProcessorChange(index);
+    } else {
+        pendingChange_ = PendingPluginChange::TXProcessor;
+        pendingIndex_ = index;
+        pluginSelectionDebounceTimer_->start();
+    }
+}
+
+void UnifiedPipelineView::onTXSinkChanged(int index)
+{
+    if (batchUpdateMode_) {
+        processTXSinkChange(index);
+    } else {
+        pendingChange_ = PendingPluginChange::TXSink;
+        pendingIndex_ = index;
+        pluginSelectionDebounceTimer_->start();
+    }
+}
+
+void UnifiedPipelineView::onRXSourceChanged(int index)
+{
+    if (batchUpdateMode_) {
+        processRXSourceChange(index);
+    } else {
+        pendingChange_ = PendingPluginChange::RXSource;
+        pendingIndex_ = index;
+        pluginSelectionDebounceTimer_->start();
+    }
+}
+
+void UnifiedPipelineView::onRXProcessorChanged(int index)
+{
+    if (batchUpdateMode_) {
+        processRXProcessorChange(index);
+    } else {
+        pendingChange_ = PendingPluginChange::RXProcessor;
+        pendingIndex_ = index;
+        pluginSelectionDebounceTimer_->start();
+    }
+}
+
+void UnifiedPipelineView::onRXSinkChanged(int index)
+{
+    if (batchUpdateMode_) {
+        processRXSinkChange(index);
+    } else {
+        pendingChange_ = PendingPluginChange::RXSink;
+        pendingIndex_ = index;
+        pluginSelectionDebounceTimer_->start();
+    }
+}
+
+// v2.2: Process debounced plugin change
+void UnifiedPipelineView::processPendingPluginChange()
+{
+    int index = pendingIndex_;
+
+    switch (pendingChange_) {
+        case PendingPluginChange::TXSource:
+            processTXSourceChange(index);
+            break;
+        case PendingPluginChange::TXProcessor:
+            processTXProcessorChange(index);
+            break;
+        case PendingPluginChange::TXSink:
+            processTXSinkChange(index);
+            break;
+        case PendingPluginChange::RXSource:
+            processRXSourceChange(index);
+            break;
+        case PendingPluginChange::RXProcessor:
+            processRXProcessorChange(index);
+            break;
+        case PendingPluginChange::RXSink:
+            processRXSinkChange(index);
+            break;
+        default:
+            break;
+    }
+
+    pendingChange_ = PendingPluginChange::None;
+}
+
+// v2.2: Actual plugin change handlers (original logic)
+void UnifiedPipelineView::processTXSourceChange(int index)
 {
     if (index <= 0 || !pluginManager_) {
         txSource_ = nullptr;
@@ -499,7 +621,7 @@ void UnifiedPipelineView::onTXSourceChanged(int index)
     updateTXStatus();
 }
 
-void UnifiedPipelineView::onTXProcessorChanged(int index)
+void UnifiedPipelineView::processTXProcessorChange(int index)
 {
     if (index <= 0 || !pluginManager_) {
         txProcessor_ = nullptr;
@@ -517,7 +639,7 @@ void UnifiedPipelineView::onTXProcessorChanged(int index)
     updateTXStatus();
 }
 
-void UnifiedPipelineView::onTXSinkChanged(int index)
+void UnifiedPipelineView::processTXSinkChange(int index)
 {
     if (index <= 0 || !pluginManager_) {
         txSink_ = nullptr;
@@ -535,7 +657,7 @@ void UnifiedPipelineView::onTXSinkChanged(int index)
     updateTXStatus();
 }
 
-void UnifiedPipelineView::onRXSourceChanged(int index)
+void UnifiedPipelineView::processRXSourceChange(int index)
 {
     if (index <= 0 || !pluginManager_) {
         rxSource_ = nullptr;
@@ -553,7 +675,7 @@ void UnifiedPipelineView::onRXSourceChanged(int index)
     updateRXStatus();
 }
 
-void UnifiedPipelineView::onRXProcessorChanged(int index)
+void UnifiedPipelineView::processRXProcessorChange(int index)
 {
     if (index <= 0 || !pluginManager_) {
         rxProcessor_ = nullptr;
@@ -571,7 +693,7 @@ void UnifiedPipelineView::onRXProcessorChanged(int index)
     updateRXStatus();
 }
 
-void UnifiedPipelineView::onRXSinkChanged(int index)
+void UnifiedPipelineView::processRXSinkChange(int index)
 {
     if (index <= 0 || !pluginManager_) {
         rxSink_ = nullptr;
@@ -730,60 +852,87 @@ void UnifiedPipelineView::onStopRXClicked()
 
 void UnifiedPipelineView::onBridgeModeClicked()
 {
-    // v2.1: Bridge Mode preset - one-click setup for stable Windows ⇄ AIOC bridge
-    // Step 1: Stop running pipelines if active
-    bool txWasRunning = false;
-    bool rxWasRunning = false;
+    // v2.2: Radio Mode - one-click AIOC radio setup
+    // Auto-configures: Windows Mic → AIOC Sink (TX), AIOC Source → Windows Speaker (RX)
 
+    // Step 1: Stop running pipelines
     if (txPipeline_ && txPipeline_->isRunning()) {
-        txWasRunning = true;
         txPipeline_->stop();
-        std::cout << "[UI] Stopped TX pipeline for Bridge Mode reconfiguration" << std::endl;
+        std::cout << "[UI] Stopped TX pipeline for Radio Mode" << std::endl;
     }
-
     if (rxPipeline_ && rxPipeline_->isRunning()) {
-        rxWasRunning = true;
         rxPipeline_->stop();
-        std::cout << "[UI] Stopped RX pipeline for Bridge Mode reconfiguration" << std::endl;
+        std::cout << "[UI] Stopped RX pipeline for Radio Mode" << std::endl;
     }
 
-    // Step 2: Apply Bridge Mode timing preset to both pipelines
-    if (txPipeline_) {
-        txPipeline_->enableBridgeMode();
+    // Step 2: Find AIOC radio devices
+    int txSourceIdx = txSourceCombo_->findText("Windows Microphone (WASAPI)");
+    int txSinkIdx = txSinkCombo_->findText("AIOC Sink");
+    int rxSourceIdx = rxSourceCombo_->findText("AIOC Source");
+    int rxSinkIdx = rxSinkCombo_->findText("Windows Speaker (WASAPI)");
+
+    // Check if all required plugins are loaded
+    QStringList missing;
+    if (txSourceIdx < 0) missing << "Windows Microphone (WASAPI)";
+    if (txSinkIdx < 0) missing << "AIOC Sink";
+    if (rxSourceIdx < 0) missing << "AIOC Source";
+    if (rxSinkIdx < 0) missing << "Windows Speaker (WASAPI)";
+
+    if (!missing.isEmpty()) {
+        QMessageBox::warning(this, "Radio Mode",
+            "Cannot configure Radio Mode - missing plugins:\n\n• " +
+            missing.join("\n• ") +
+            "\n\nEnsure all plugins are loaded and AIOC device is connected.");
+        return;
     }
 
-    if (rxPipeline_) {
-        rxPipeline_->enableBridgeMode();
-    }
+    // Step 3: Block signals to avoid triggering handlers during batch update
+    QSignalBlocker txSourceBlock(txSourceCombo_);
+    QSignalBlocker txProcBlock(txProcessorCombo_);
+    QSignalBlocker txSinkBlock(txSinkCombo_);
+    QSignalBlocker rxSourceBlock(rxSourceCombo_);
+    QSignalBlocker rxProcBlock(rxProcessorCombo_);
+    QSignalBlocker rxSinkBlock(rxSinkCombo_);
 
-    // Step 3: Configure processor slots to None (disabled in Bridge Mode)
-    txProcessorCombo_->setCurrentIndex(0);  // Assumes index 0 is "(None - Passthrough)"
-    txProcessorCombo_->setEnabled(false);   // Gray out
+    // Step 4: Apply golden path selections
+    txSourceCombo_->setCurrentIndex(txSourceIdx);
+    txProcessorCombo_->setCurrentIndex(0);  // None
+    txSinkCombo_->setCurrentIndex(txSinkIdx);
 
-    rxProcessorCombo_->setCurrentIndex(0);
+    rxSourceCombo_->setCurrentIndex(rxSourceIdx);
+    rxProcessorCombo_->setCurrentIndex(0);  // None
+    rxSinkCombo_->setCurrentIndex(rxSinkIdx);
+
+    // Step 5: Disable processor combos (passthrough only in Bridge Mode)
+    txProcessorCombo_->setEnabled(false);
     rxProcessorCombo_->setEnabled(false);
 
-    // Step 4: Mark Bridge Mode as active
+    // Step 6: Enable batch update mode to bypass debouncing
+    batchUpdateMode_ = true;
+
+    // Step 7: Manually trigger selection handlers - now executes immediately
+    onTXSourceChanged(txSourceIdx);
+    onTXSinkChanged(txSinkIdx);
+    onRXSourceChanged(rxSourceIdx);
+    onRXSinkChanged(rxSinkIdx);
+
+    // Step 8: Disable batch update mode
+    batchUpdateMode_ = false;
+
+    // Step 9: Apply timing preset to pipelines
+    if (txPipeline_) txPipeline_->enableBridgeMode();
+    if (rxPipeline_) rxPipeline_->enableBridgeMode();
+
     bridgeModeActive_ = true;
 
-    // Step 5: Show confirmation dialog
-    QString message =
-        "Bridge Mode configured successfully!\n\n"
-        "Settings applied:\n"
-        "• 48kHz forced on all devices\n"
-        "• Processors disabled (passthrough)\n"
-        "• Frame size: 1024 samples (~21ms)\n"
-        "• Backpressure: 10ms retry\n\n";
+    // Step 10: Show confirmation
+    QMessageBox::information(this, "Radio Mode",
+        "Radio Mode configured!\n\n"
+        "TX: Windows Mic → AIOC Radio\n"
+        "RX: AIOC Radio → Windows Speaker\n\n"
+        "Click 'Start Both' to begin.");
 
-    if (txWasRunning || rxWasRunning) {
-        message += "Pipelines were stopped. Click 'Start Both' to restart in Bridge Mode.";
-    } else {
-        message += "Configure your devices, then click 'Start Both' to begin.";
-    }
-
-    QMessageBox::information(this, "Bridge Mode Active", message);
-
-    std::cout << "[UI] Bridge Mode preset applied to both pipelines" << std::endl;
+    std::cout << "[UI] Radio Mode: AIOC setup configured" << std::endl;
 }
 
 void UnifiedPipelineView::onStartBothClicked()
