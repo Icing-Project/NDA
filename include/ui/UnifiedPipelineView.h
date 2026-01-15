@@ -43,6 +43,10 @@ public:
     // Cancel any pending plugin selection changes (called before Apply)
     void cancelPendingPluginChange();
 
+    // Get currently selected plugins (for key application)
+    std::shared_ptr<AudioProcessorPlugin> getTXProcessor() const { return txProcessor_; }
+    std::shared_ptr<AudioProcessorPlugin> getRXProcessor() const { return rxProcessor_; }
+
 signals:
     void txPipelineStarted();
     void txPipelineStopped();

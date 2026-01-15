@@ -147,6 +147,8 @@ set(SOURCES
     src/ui/MainWindow.cpp
     src/ui/UnifiedPipelineView.cpp
     src/ui/PluginSidebar.cpp
+    src/ui/ImportKeysDialog.cpp
+    src/ui/ExportKeysDialog.cpp
     # v2.2: Removed dead UI views (AudioDevicesView, EncryptionView, PluginsView, SettingsView)
     src/audio/AudioEngine.cpp
     src/audio/AudioDevice.cpp
@@ -155,6 +157,7 @@ set(SOURCES
     src/core/ProcessingPipeline.cpp
     src/plugins/PluginManager.cpp
     src/plugins/PluginPaths.cpp
+    src/crypto/CryptoManager.cpp
 )
 
 # Add Python bridge if enabled
@@ -167,6 +170,8 @@ set(HEADERS
     include/ui/MainWindow.h
     include/ui/UnifiedPipelineView.h
     include/ui/PluginSidebar.h
+    include/ui/ImportKeysDialog.h
+    include/ui/ExportKeysDialog.h
     # v2.2: Removed dead UI views (see SOURCES comment)
     include/audio/AudioEngine.h
     include/audio/AudioDevice.h
@@ -182,6 +187,7 @@ set(HEADERS
     include/plugins/AudioSinkPlugin.h
     include/plugins/PluginManager.h
     include/plugins/PluginPaths.h
+    include/crypto/CryptoManager.h
 )
 
 # Add Python bridge header if enabled

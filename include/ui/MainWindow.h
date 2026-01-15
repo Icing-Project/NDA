@@ -34,10 +34,21 @@ private slots:
     void onRXPipelineStopped();
     // v2.2: Removed dead onStatusUpdate slot
 
+    // Crypto menu slots
+    void onGenerateAESKey();
+    void onGenerateX25519KeyPair();
+    void onImportKeys();
+    void onExportKeys();
+    void onDeriveSharedKey();
+    void onClearKeys();
+
 private:
     void setupUI();
     void createMenus();
     void createStatusBar();
+
+    // Crypto helper methods
+    bool applyKeyToSelectedPlugin(const std::string& paramName, const std::string& hexValue);
 
     // v2.0: Single unified view (no tabs)
     nda::UnifiedPipelineView *unifiedView_;

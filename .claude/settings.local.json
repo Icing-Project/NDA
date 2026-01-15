@@ -12,7 +12,8 @@
       "Bash(python3:*)",
       "Bash(pip3 install:*)",
       "Bash(sudo apt-get install:*)",
-      "Bash(git -C /mnt/c/Users/Steph/Desktop/Icing/Dev/NDA status --short)"
+      "Bash(git -C /mnt/c/Users/Steph/Desktop/Icing/Dev/NDA status --short)",
+      "Bash(cmake --build:*)"
     ]
   }
 }
