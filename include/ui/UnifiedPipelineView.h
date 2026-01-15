@@ -77,6 +77,14 @@ private slots:
     void updateMetrics();
     // v2.2: Removed dead onPluginFocused slot
 
+    // v2.2: Plugin configuration button handlers (cogwheel buttons)
+    void onTXSourceConfigClicked();
+    void onTXProcessorConfigClicked();
+    void onTXSinkConfigClicked();
+    void onRXSourceConfigClicked();
+    void onRXProcessorConfigClicked();
+    void onRXSinkConfigClicked();
+
 protected:
     // Keyboard input for PTT (T and Space keys)
     void keyPressEvent(QKeyEvent* event) override;
@@ -98,7 +106,11 @@ private:
     
     QWidget* createPipelineCard(const QString& title, bool isTX);
     QProgressBar* createAudioMeter();
-    
+
+    // v2.2: Cogwheel button helpers
+    QPushButton* createConfigButton();
+    void updateConfigButtonStates();
+
     // Plugin manager
     std::shared_ptr<PluginManager> pluginManager_;
     
@@ -148,6 +160,14 @@ private:
     QPushButton *startBothButton_;
     QPushButton *stopBothButton_;
     // v2.2: Removed dead settingsButton_
+
+    // v2.2: Cogwheel settings buttons (explicit sidebar trigger)
+    QPushButton *txSourceConfigBtn_;
+    QPushButton *txProcessorConfigBtn_;
+    QPushButton *txSinkConfigBtn_;
+    QPushButton *rxSourceConfigBtn_;
+    QPushButton *rxProcessorConfigBtn_;
+    QPushButton *rxSinkConfigBtn_;
 
     // Bridge Mode state (v2.1)
     bool bridgeModeActive_;
