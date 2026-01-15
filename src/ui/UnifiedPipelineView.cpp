@@ -122,6 +122,12 @@ void UnifiedPipelineView::createTXPipelineRow(QVBoxLayout* layout)
             this, &UnifiedPipelineView::onTXSourceChanged);
     pipelineRow->addWidget(txSourceCombo_);
 
+    // Config button
+    txSourceConfigBtn_ = createConfigButton();
+    connect(txSourceConfigBtn_, &QPushButton::clicked,
+            this, &UnifiedPipelineView::onTXSourceConfigClicked);
+    pipelineRow->addWidget(txSourceConfigBtn_);
+
     // Arrow label
     QLabel *arrow1 = new QLabel("→", this);
     arrow1->setStyleSheet("color: #94a3b8; font-size: 18px;");
@@ -136,6 +142,12 @@ void UnifiedPipelineView::createTXPipelineRow(QVBoxLayout* layout)
             this, &UnifiedPipelineView::onTXProcessorChanged);
     pipelineRow->addWidget(txProcessorCombo_);
 
+    // Config button
+    txProcessorConfigBtn_ = createConfigButton();
+    connect(txProcessorConfigBtn_, &QPushButton::clicked,
+            this, &UnifiedPipelineView::onTXProcessorConfigClicked);
+    pipelineRow->addWidget(txProcessorConfigBtn_);
+
     // Arrow label
     QLabel *arrow2 = new QLabel("→", this);
     arrow2->setStyleSheet("color: #94a3b8; font-size: 18px;");
@@ -149,6 +161,12 @@ void UnifiedPipelineView::createTXPipelineRow(QVBoxLayout* layout)
     connect(txSinkCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &UnifiedPipelineView::onTXSinkChanged);
     pipelineRow->addWidget(txSinkCombo_);
+
+    // Config button
+    txSinkConfigBtn_ = createConfigButton();
+    connect(txSinkConfigBtn_, &QPushButton::clicked,
+            this, &UnifiedPipelineView::onTXSinkConfigClicked);
+    pipelineRow->addWidget(txSinkConfigBtn_);
 
     cardLayout->addLayout(pipelineRow);
 
@@ -272,6 +290,12 @@ void UnifiedPipelineView::createRXPipelineRow(QVBoxLayout* layout)
             this, &UnifiedPipelineView::onRXSourceChanged);
     pipelineRow->addWidget(rxSourceCombo_);
 
+    // Config button
+    rxSourceConfigBtn_ = createConfigButton();
+    connect(rxSourceConfigBtn_, &QPushButton::clicked,
+            this, &UnifiedPipelineView::onRXSourceConfigClicked);
+    pipelineRow->addWidget(rxSourceConfigBtn_);
+
     // Arrow label
     QLabel *arrow1 = new QLabel("→", this);
     arrow1->setStyleSheet("color: #94a3b8; font-size: 18px;");
@@ -286,6 +310,12 @@ void UnifiedPipelineView::createRXPipelineRow(QVBoxLayout* layout)
             this, &UnifiedPipelineView::onRXProcessorChanged);
     pipelineRow->addWidget(rxProcessorCombo_);
 
+    // Config button
+    rxProcessorConfigBtn_ = createConfigButton();
+    connect(rxProcessorConfigBtn_, &QPushButton::clicked,
+            this, &UnifiedPipelineView::onRXProcessorConfigClicked);
+    pipelineRow->addWidget(rxProcessorConfigBtn_);
+
     // Arrow label
     QLabel *arrow2 = new QLabel("→", this);
     arrow2->setStyleSheet("color: #94a3b8; font-size: 18px;");
@@ -299,6 +329,12 @@ void UnifiedPipelineView::createRXPipelineRow(QVBoxLayout* layout)
     connect(rxSinkCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &UnifiedPipelineView::onRXSinkChanged);
     pipelineRow->addWidget(rxSinkCombo_);
+
+    // Config button
+    rxSinkConfigBtn_ = createConfigButton();
+    connect(rxSinkConfigBtn_, &QPushButton::clicked,
+            this, &UnifiedPipelineView::onRXSinkConfigClicked);
+    pipelineRow->addWidget(rxSinkConfigBtn_);
 
     cardLayout->addLayout(pipelineRow);
 
@@ -453,6 +489,19 @@ QProgressBar* UnifiedPipelineView::createAudioMeter()
     return meter;
 }
 
+// v2.2: Create cogwheel settings button
+QPushButton* UnifiedPipelineView::createConfigButton()
+{
+    QPushButton *btn = new QPushButton("⚙", this);
+    btn->setObjectName("configButton");
+    btn->setMinimumHeight(35);
+    btn->setMinimumWidth(35);
+    btn->setMaximumWidth(35);
+    btn->setToolTip("Configure plugin settings");
+    btn->setEnabled(false);  // Disabled by default (no plugin selected)
+    return btn;
+}
+
 void UnifiedPipelineView::cancelPendingPluginChange()
 {
     // Stop debounce timer and clear pending change
@@ -500,6 +549,9 @@ void UnifiedPipelineView::refreshPluginLists()
         txSinkCombo_->addItem(name);
         rxSinkCombo_->addItem(name);
     }
+
+    // v2.2: Reset button states when plugins reloaded
+    updateConfigButtonStates();
 }
 
 // v2.2: Debounced signal handlers - check batch mode to bypass debouncing
@@ -608,17 +660,20 @@ void UnifiedPipelineView::processTXSourceChange(int index)
     if (index <= 0 || !pluginManager_) {
         txSource_ = nullptr;
         updateTXStatus();
+        updateConfigButtonStates();
         return;
     }
 
     std::string pluginName = txSourceCombo_->currentText().toStdString();
     txSource_ = pluginManager_->getAudioSourcePlugin(pluginName);
 
-    if (txSource_) {
-        pluginSidebar_->showPluginConfig(txSource_);
-    }
+    // v2.2: Removed auto-open sidebar - now requires explicit cogwheel button click
+    // if (txSource_) {
+    //     pluginSidebar_->showPluginConfig(txSource_);
+    // }
 
     updateTXStatus();
+    updateConfigButtonStates();
 }
 
 void UnifiedPipelineView::processTXProcessorChange(int index)
@@ -626,17 +681,20 @@ void UnifiedPipelineView::processTXProcessorChange(int index)
     if (index <= 0 || !pluginManager_) {
         txProcessor_ = nullptr;
         updateTXStatus();
+        updateConfigButtonStates();
         return;
     }
 
     std::string pluginName = txProcessorCombo_->currentText().toStdString();
     txProcessor_ = pluginManager_->getAudioProcessorPlugin(pluginName);
 
-    if (txProcessor_) {
-        pluginSidebar_->showPluginConfig(txProcessor_);
-    }
+    // v2.2: Removed auto-open sidebar - now requires explicit cogwheel button click
+    // if (txProcessor_) {
+    //     pluginSidebar_->showPluginConfig(txProcessor_);
+    // }
 
     updateTXStatus();
+    updateConfigButtonStates();
 }
 
 void UnifiedPipelineView::processTXSinkChange(int index)
@@ -644,17 +702,20 @@ void UnifiedPipelineView::processTXSinkChange(int index)
     if (index <= 0 || !pluginManager_) {
         txSink_ = nullptr;
         updateTXStatus();
+        updateConfigButtonStates();
         return;
     }
 
     std::string pluginName = txSinkCombo_->currentText().toStdString();
     txSink_ = pluginManager_->getAudioSinkPlugin(pluginName);
 
-    if (txSink_) {
-        pluginSidebar_->showPluginConfig(txSink_);
-    }
+    // v2.2: Removed auto-open sidebar - now requires explicit cogwheel button click
+    // if (txSink_) {
+    //     pluginSidebar_->showPluginConfig(txSink_);
+    // }
 
     updateTXStatus();
+    updateConfigButtonStates();
 }
 
 void UnifiedPipelineView::processRXSourceChange(int index)
@@ -662,17 +723,20 @@ void UnifiedPipelineView::processRXSourceChange(int index)
     if (index <= 0 || !pluginManager_) {
         rxSource_ = nullptr;
         updateRXStatus();
+        updateConfigButtonStates();
         return;
     }
 
     std::string pluginName = rxSourceCombo_->currentText().toStdString();
     rxSource_ = pluginManager_->getAudioSourcePlugin(pluginName);
 
-    if (rxSource_) {
-        pluginSidebar_->showPluginConfig(rxSource_);
-    }
+    // v2.2: Removed auto-open sidebar - now requires explicit cogwheel button click
+    // if (rxSource_) {
+    //     pluginSidebar_->showPluginConfig(rxSource_);
+    // }
 
     updateRXStatus();
+    updateConfigButtonStates();
 }
 
 void UnifiedPipelineView::processRXProcessorChange(int index)
@@ -680,17 +744,20 @@ void UnifiedPipelineView::processRXProcessorChange(int index)
     if (index <= 0 || !pluginManager_) {
         rxProcessor_ = nullptr;
         updateRXStatus();
+        updateConfigButtonStates();
         return;
     }
 
     std::string pluginName = rxProcessorCombo_->currentText().toStdString();
     rxProcessor_ = pluginManager_->getAudioProcessorPlugin(pluginName);
 
-    if (rxProcessor_) {
-        pluginSidebar_->showPluginConfig(rxProcessor_);
-    }
+    // v2.2: Removed auto-open sidebar - now requires explicit cogwheel button click
+    // if (rxProcessor_) {
+    //     pluginSidebar_->showPluginConfig(rxProcessor_);
+    // }
 
     updateRXStatus();
+    updateConfigButtonStates();
 }
 
 void UnifiedPipelineView::processRXSinkChange(int index)
@@ -698,17 +765,75 @@ void UnifiedPipelineView::processRXSinkChange(int index)
     if (index <= 0 || !pluginManager_) {
         rxSink_ = nullptr;
         updateRXStatus();
+        updateConfigButtonStates();
         return;
     }
 
     std::string pluginName = rxSinkCombo_->currentText().toStdString();
     rxSink_ = pluginManager_->getAudioSinkPlugin(pluginName);
 
+    // v2.2: Removed auto-open sidebar - now requires explicit cogwheel button click
+    // if (rxSink_) {
+    //     pluginSidebar_->showPluginConfig(rxSink_);
+    // }
+
+    updateRXStatus();
+    updateConfigButtonStates();
+}
+
+// v2.2: Cogwheel button handlers - ONLY way to open plugin settings
+void UnifiedPipelineView::onTXSourceConfigClicked()
+{
+    if (txSource_) {
+        pluginSidebar_->showPluginConfig(txSource_);
+    }
+}
+
+void UnifiedPipelineView::onTXProcessorConfigClicked()
+{
+    if (txProcessor_) {
+        pluginSidebar_->showPluginConfig(txProcessor_);
+    }
+}
+
+void UnifiedPipelineView::onTXSinkConfigClicked()
+{
+    if (txSink_) {
+        pluginSidebar_->showPluginConfig(txSink_);
+    }
+}
+
+void UnifiedPipelineView::onRXSourceConfigClicked()
+{
+    if (rxSource_) {
+        pluginSidebar_->showPluginConfig(rxSource_);
+    }
+}
+
+void UnifiedPipelineView::onRXProcessorConfigClicked()
+{
+    if (rxProcessor_) {
+        pluginSidebar_->showPluginConfig(rxProcessor_);
+    }
+}
+
+void UnifiedPipelineView::onRXSinkConfigClicked()
+{
     if (rxSink_) {
         pluginSidebar_->showPluginConfig(rxSink_);
     }
+}
 
-    updateRXStatus();
+// v2.2: Update config button states based on plugin selection
+void UnifiedPipelineView::updateConfigButtonStates()
+{
+    // Enable button only if valid plugin selected (not nullptr)
+    txSourceConfigBtn_->setEnabled(txSource_ != nullptr);
+    txProcessorConfigBtn_->setEnabled(txProcessor_ != nullptr);
+    txSinkConfigBtn_->setEnabled(txSink_ != nullptr);
+    rxSourceConfigBtn_->setEnabled(rxSource_ != nullptr);
+    rxProcessorConfigBtn_->setEnabled(rxProcessor_ != nullptr);
+    rxSinkConfigBtn_->setEnabled(rxSink_ != nullptr);
 }
 
 void UnifiedPipelineView::updateTXStatus()
@@ -1440,6 +1565,30 @@ void UnifiedPipelineView::applyModernStyles()
         QProgressBar::chunk {
             background-color: #4ade80;
             border-radius: 4px;
+        }
+
+        /* v2.2: Cogwheel settings buttons */
+        #configButton {
+            background-color: #475569;
+            color: #cbd5e1;
+            border: none;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: 600;
+            padding: 0px;
+            min-width: 35px;
+            max-width: 35px;
+            min-height: 35px;
+        }
+
+        #configButton:hover:enabled {
+            background-color: #64748b;
+        }
+
+        #configButton:disabled {
+            background-color: #334155;
+            color: #64748b;
+            opacity: 0.5;
         }
     )");
 }
