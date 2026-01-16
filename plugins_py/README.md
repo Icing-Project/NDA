@@ -1,35 +1,43 @@
-# NADE Python Plugins
+# NDA Python Plugins
 
-Python implementation of NADE audio plugins. These plugins provide the same functionality as the C++ versions but are easier to develop and modify.
+Python implementation of NDA audio plugins. These plugins provide the same functionality as the C++ versions but are easier to develop and modify.
 
 ## Available Plugins
 
 ### Audio Sources
 - **sine_wave_source.py** - Generates a sine wave tone for testing (default 440Hz A4 note)
-- **pulseaudio_microphone.py** - Captures audio from system microphone using PulseAudio
+- **sounddevice_microphone.py** - Captures audio from system microphone using sounddevice (PortAudio)
+- **soundcard_microphone.py** - Captures audio from system microphone using soundcard (WASAPI/PulseAudio)
+- **pulseaudio_microphone.py** - Captures audio from system microphone using PulseAudio (Linux-only, PyAudio)
 
 ### Audio Sinks
 - **null_sink.py** - Discards audio but shows metrics in console for debugging
 - **wav_file_sink.py** - Records audio to WAV file (32-bit float PCM)
-- **pulseaudio_speaker.py** - Plays audio through system speakers using PulseAudio
+- **sounddevice_speaker.py** - Plays audio through system speakers using sounddevice (PortAudio)
+- **soundcard_speaker.py** - Plays audio through system speakers using soundcard (WASAPI/PulseAudio)
+- **pulseaudio_speaker.py** - Plays audio through system speakers using PulseAudio (Linux-only, PyAudio)
 
 ## Installation
 
 ### Requirements
 ```bash
-pip install numpy pyaudio
+cd plugins_py
+python -m pip install -r requirements.txt
 ```
 
-Note: `pyaudio` is optional and only needed for microphone and speaker plugins.
+Notes:
+- `soundcard` provides cross-OS audio I/O (Windows WASAPI, Linux PulseAudio/pipewire-pulse).
+- `sounddevice` uses PortAudio (you may need OS PortAudio runtime packages on Linux).
+- `pyaudio` is optional and only needed for the Linux-only PulseAudio plugins.
 
 ### Linux (Fedora/RHEL)
 ```bash
-sudo dnf install python3-numpy python3-pyaudio portaudio-devel
+sudo dnf install pulseaudio portaudio
 ```
 
 ### Linux (Ubuntu/Debian)
 ```bash
-sudo apt install python3-numpy python3-pyaudio portaudio19-dev
+sudo apt install pulseaudio libportaudio2
 ```
 
 ## Usage
@@ -37,14 +45,11 @@ sudo apt install python3-numpy python3-pyaudio portaudio19-dev
 ### Basic Plugin Loading
 
 ```python
-from plugin_loader import PluginLoader
 from base_plugin import AudioBuffer
 
-# Create loader
-loader = PluginLoader("plugins_py")
-
-# Load a plugin
-plugin = loader.load_plugin("sine_wave_source")
+# Import and create plugin directly
+from sine_wave_source import create_plugin
+plugin = create_plugin()
 
 # Initialize and configure
 plugin.initialize()
@@ -60,7 +65,7 @@ plugin.read_audio(buffer)
 
 # Stop and cleanup
 plugin.stop()
-loader.unload_all()
+plugin.shutdown()
 ```
 
 ### Test Script
@@ -69,13 +74,17 @@ Run the included test script to verify all plugins work:
 
 ```bash
 cd plugins_py
-python3 test_plugins.py
+python test_plugins.py
 ```
 
 This will:
 1. List all available plugins
-2. Test sine wave generator with null sink (3 seconds)
-3. Test sine wave generator recording to WAV file (2 seconds)
+2. Test sine wave generator with null sink (~2 seconds)
+3. Test sine wave generator recording to `test_recording.wav` (~1 second)
+
+Optional:
+- List soundcard devices: `python test_plugins.py --list-devices`
+- Play a short sine burst via the soundcard speaker plugin: `python test_plugins.py --soundcard-sine`
 
 ## Plugin Architecture
 
@@ -167,7 +176,7 @@ Use Python plugins for:
 
 ## Integration with C++ Application
 
-The C++ NADE application can load Python plugins using:
+The C++ NDA application can load Python plugins using:
 1. **Python C API** - Embed Python interpreter
 2. **pybind11** - Modern C++/Python binding
 3. **IPC** - Inter-process communication via sockets
@@ -190,4 +199,4 @@ class PythonPluginLoader {
 
 ## License
 
-Same as NADE project license.
+Same as NDA project license.

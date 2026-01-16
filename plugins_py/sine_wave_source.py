@@ -3,6 +3,7 @@ Sine Wave Generator Plugin - Python Implementation
 Generates a sine wave tone for testing
 """
 
+import math
 import numpy as np
 from base_plugin import (
     AudioSourcePlugin, AudioBuffer, PluginInfo,
@@ -16,10 +17,29 @@ class SineWaveSourcePlugin(AudioSourcePlugin):
     def __init__(self):
         super().__init__()
         self.sample_rate = 48000
-        self.channels = 2
+        self.channel_count = 2
+        self.buffer_size = 512
         self.frequency = 440.0  # A4 note
         self.phase = 0.0
         self.callback = None
+
+        self._offsets = None
+        self._phase_work = None
+        self._samples = None
+
+    def _ensure_work_buffers(self, frames: int) -> None:
+        frames = int(frames)
+        if frames <= 0:
+            self._offsets = None
+            self._phase_work = None
+            self._samples = None
+            return
+        if self._offsets is not None and int(self._offsets.shape[0]) == frames:
+            return
+
+        self._offsets = np.arange(frames, dtype=np.float32)
+        self._phase_work = np.empty(frames, dtype=np.float32)
+        self._samples = np.empty(frames, dtype=np.float32)
 
     def initialize(self) -> bool:
         """Initialize the plugin"""
@@ -48,7 +68,7 @@ class SineWaveSourcePlugin(AudioSourcePlugin):
         return PluginInfo(
             name="Sine Wave Generator",
             version="1.0.0",
-            author="NADE Team",
+            author="Icing Project",
             description="Generates a 440Hz sine wave (A4 note) for testing",
             plugin_type=PluginType.AUDIO_SOURCE,
             api_version=1
@@ -66,7 +86,7 @@ class SineWaveSourcePlugin(AudioSourcePlugin):
         elif key == "sampleRate":
             return str(self.sample_rate)
         elif key == "channels":
-            return str(self.channels)
+            return str(self.channel_count)
         return ""
 
     def set_audio_callback(self, callback: AudioSourceCallback):
@@ -79,23 +99,28 @@ class SineWaveSourcePlugin(AudioSourcePlugin):
             buffer.clear()
             return False
 
-        frame_count = buffer.get_frame_count()
-        phase_increment = 2.0 * np.pi * self.frequency / self.sample_rate
+        frame_count = int(buffer.get_frame_count())
+        if frame_count <= 0:
+            return True
 
-        # Generate phase values for all frames
-        phases = self.phase + np.arange(frame_count) * phase_increment
+        self._ensure_work_buffers(frame_count)
 
-        # Generate sine wave samples
-        samples = 0.5 * np.sin(phases).astype(np.float32)
+        phase_increment = (math.tau * float(self.frequency)) / float(self.sample_rate)
+        phase0 = float(self.phase)
 
-        # Write to all channels
-        for ch in range(self.channels):
-            buffer.data[ch] = samples
+        phase_increment_f32 = np.float32(phase_increment)
+        phase0_f32 = np.float32(phase0)
 
-        # Update phase for next call
-        self.phase = phases[-1] + phase_increment
-        if self.phase >= 2.0 * np.pi:
-            self.phase -= 2.0 * np.pi
+        np.multiply(self._offsets, phase_increment_f32, out=self._phase_work)
+        self._phase_work += phase0_f32
+        np.sin(self._phase_work, out=self._samples)
+        self._samples *= np.float32(0.5)
+
+        channels = int(buffer.get_channel_count())
+        buffer.data[:channels, :frame_count] = self._samples
+
+        # Advance phase and wrap robustly to keep arguments bounded (performance + accuracy).
+        self.phase = (phase0 + (frame_count * phase_increment)) % math.tau
 
         return True
 
@@ -103,19 +128,27 @@ class SineWaveSourcePlugin(AudioSourcePlugin):
         """Get sample rate"""
         return self.sample_rate
 
-    def get_channels(self) -> int:
+    def get_channel_count(self) -> int:
         """Get number of channels"""
-        return self.channels
+        return self.channel_count
 
     def set_sample_rate(self, sample_rate: int):
         """Set sample rate"""
         if self.state in (PluginState.UNLOADED, PluginState.INITIALIZED):
             self.sample_rate = sample_rate
 
-    def set_channels(self, channels: int):
+    def set_channel_count(self, channels: int):
         """Set number of channels"""
         if self.state in (PluginState.UNLOADED, PluginState.INITIALIZED):
-            self.channels = channels
+            self.channel_count = channels
+
+    def get_buffer_size(self) -> int:
+        return self.buffer_size
+
+    def set_buffer_size(self, samples: int):
+        if self.state in (PluginState.UNLOADED, PluginState.INITIALIZED):
+            self.buffer_size = max(64, int(samples))
+            self._ensure_work_buffers(self.buffer_size)
 
 
 # Plugin factory function

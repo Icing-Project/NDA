@@ -1,16 +1,20 @@
 @echo off
-REM NADE Windows Deployment Script
+REM NDA Windows Deployment Script
 REM Packages everything into readytoship folder
 
 echo ================================================
-echo NADE - Windows Deployment Script
+echo NDA - Windows Deployment Script
 echo ================================================
 echo.
 
-REM Check if executable exists
-if not exist "build\Release\NADE.exe" (
-    echo ERROR: build\Release\NADE.exe not found!
-    echo Please build the project first with build_windows.bat
+REM Check if executable exists (Visual Studio or Ninja layout)
+set EXE_PATH=build\Release\NDA.exe
+if not exist "%EXE_PATH%" (
+    set EXE_PATH=build\NDA.exe
+)
+if not exist "%EXE_PATH%" (
+    echo ERROR: NDA.exe not found in build\Release or build\
+    echo Please build the project first (scripts\build_windows.bat or scripts\build_windows_ninja.bat)
     pause
     exit /b 1
 )
@@ -44,13 +48,13 @@ if "%QT_DIR%"=="" (
     echo WARNING: Qt installation not found automatically
     echo Please run windeployqt manually:
     echo   cd readytoship\bin
-    echo   "C:\Qt\6.x\msvc2019_64\bin\windeployqt.exe" NADE.exe
+    echo   "C:\Qt\6.x\msvc2019_64\bin\windeployqt.exe" NDA.exe
     echo.
 ) else (
     echo Found Qt at: %QT_DIR%
     echo Running windeployqt...
     cd readytoship\bin
-    "%QT_DIR%\bin\windeployqt.exe" NADE.exe --release --no-translations
+    "%QT_DIR%\bin\windeployqt.exe" NDA.exe --release --no-translations
     cd ..\..
     echo ✓ Qt dependencies deployed
 )
@@ -106,11 +110,11 @@ echo Package location: readytoship\
 echo.
 echo To test:
 echo   cd readytoship
-echo   NADE.bat
+echo   NDA.bat
 echo.
 echo To distribute:
 echo   1. Test the application
-echo   2. Create ZIP: 7z a NADE-Windows-x64.zip readytoship\*
+echo   2. Create ZIP: 7z a NDA-Windows-x64.zip readytoship\*
 echo   3. Or create installer with Inno Setup
 echo.
 pause

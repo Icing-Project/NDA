@@ -1,16 +1,41 @@
 #include <QApplication>
 #include <QStyleFactory>
 #include <QPalette>
+#include <QTimer>
+#include <iostream>
 #include "ui/MainWindow.h"
 
 int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
 
+    // v2.1: Parse CLI arguments for soak test support
+    int testDurationSeconds = 0;
+    bool autoStart = false;
+
+    for (int i = 1; i < argc; ++i) {
+        std::string arg(argv[i]);
+
+        if (arg == "--duration" && i + 1 < argc) {
+            testDurationSeconds = std::atoi(argv[++i]);
+            autoStart = true;
+            std::cout << "[Main] Soak test mode enabled: " << testDurationSeconds << " seconds\n";
+        } else if (arg == "--help" || arg == "-h") {
+            std::cout << "NDA v2.1 - Network Defense Audio Bridge\n";
+            std::cout << "Usage: NDA [options]\n\n";
+            std::cout << "Options:\n";
+            std::cout << "  --duration SECONDS  Run soak test for specified duration then exit\n";
+            std::cout << "  --help, -h          Show this help message\n\n";
+            std::cout << "Example soak test:\n";
+            std::cout << "  NDA --duration 1200   (20-minute soak test)\n";
+            return 0;
+        }
+    }
+
     // Set application metadata
-    app.setApplicationName("NADE");
-    app.setApplicationVersion("1.0.0");
-    app.setOrganizationName("NADE");
+    app.setApplicationName("NDA");
+    app.setApplicationVersion("2.1.0");  // Updated to v2.1
+    app.setOrganizationName("Icing Project");
 
     // Set modern dark theme
     app.setStyle(QStyleFactory::create("Fusion"));
@@ -191,7 +216,36 @@ int main(int argc, char *argv[])
 
     // Create and show main window
     MainWindow window;
+
+    // v2.0: Auto-load plugins on startup (no manual button clicks)
+    window.autoLoadPlugins();
+
     window.show();
+
+    // v2.1: Auto-start soak test if --duration was specified
+    if (autoStart && testDurationSeconds > 0) {
+        std::cout << "[Main] Starting automated soak test in 500ms...\n";
+        std::cout << "[Main] Test will run for " << testDurationSeconds << " seconds\n";
+
+        // Start both pipelines after UI initializes
+        QTimer::singleShot(500, [&window, testDurationSeconds]() {
+            std::cout << "[Main] Auto-starting both pipelines for soak test...\n";
+            window.startBothPipelines();
+
+            // Schedule auto-stop after test duration
+            QTimer::singleShot(testDurationSeconds * 1000, [&window]() {
+                std::cout << "[Main] Soak test duration completed, stopping pipelines...\n";
+                window.stopBothPipelines();
+
+                // Wait 1 second for pipelines to fully stop, then print report and exit
+                QTimer::singleShot(1000, [&window]() {
+                    window.printSoakTestReport();
+                    std::cout << "[Main] Soak test complete, exiting...\n";
+                    QApplication::quit();
+                });
+            });
+        });
+    }
 
     return app.exec();
 }

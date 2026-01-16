@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls:*)",
+      "Bash(tree:*)",
+      "Bash(__NEW_LINE__ head -100 /mnt/c/Users/Steph/Desktop/Icing/Dev/NDA/AGENTS.md)",
+      "Bash(__NEW_LINE__ wc -l /mnt/c/Users/Steph/Desktop/Icing/Dev/NDA/AGENTS.md)",
+      "Bash(__NEW_LINE__ cat /mnt/c/Users/Steph/Desktop/Icing/Dev/NDA/AGENTS.md)",
+      "Bash(wc:*)",
+      "Bash(xargs:*)",
+      "Bash(./NDA:*)",
+      "Bash(python3:*)",
+      "Bash(pip3 install:*)",
+      "Bash(sudo apt-get install:*)",
+      "Bash(git -C /mnt/c/Users/Steph/Desktop/Icing/Dev/NDA status --short)",
+      "Bash(cmake --build:*)"
+    ]
+  }
+}

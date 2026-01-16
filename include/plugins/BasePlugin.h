@@ -6,9 +6,9 @@
 #include <string>
 #include <map>
 
-#define NADE_PLUGIN_API_VERSION 1
+#define NDA_PLUGIN_API_VERSION 1
 
-namespace NADE {
+namespace nda {
 
 struct PluginInfo {
     std::string name;
@@ -41,28 +41,28 @@ public:
     virtual PluginState getState() const = 0;
 };
 
-} // namespace NADE
+} // namespace nda
 
 // Plugin factory function signatures
-typedef NADE::BasePlugin* (*CreatePluginFunc)();
-typedef void (*DestroyPluginFunc)(NADE::BasePlugin*);
+typedef nda::BasePlugin* (*CreatePluginFunc)();
+typedef void (*DestroyPluginFunc)(nda::BasePlugin*);
 
 // Export macros for plugins
 #ifdef _WIN32
-    #define NADE_PLUGIN_EXPORT extern "C" __declspec(dllexport)
+    #define NDA_PLUGIN_EXPORT extern "C" __declspec(dllexport)
 #else
-    #define NADE_PLUGIN_EXPORT extern "C" __attribute__((visibility("default")))
+    #define NDA_PLUGIN_EXPORT extern "C" __attribute__((visibility("default")))
 #endif
 
-#define NADE_DECLARE_PLUGIN(PluginClass) \
-    NADE_PLUGIN_EXPORT NADE::BasePlugin* createPlugin() { \
+#define NDA_DECLARE_PLUGIN(PluginClass) \
+    NDA_PLUGIN_EXPORT nda::BasePlugin* createPlugin() { \
         return new PluginClass(); \
     } \
-    NADE_PLUGIN_EXPORT void destroyPlugin(NADE::BasePlugin* plugin) { \
+    NDA_PLUGIN_EXPORT void destroyPlugin(nda::BasePlugin* plugin) { \
         delete plugin; \
     } \
-    NADE_PLUGIN_EXPORT int getPluginApiVersion() { \
-        return NADE_PLUGIN_API_VERSION; \
+    NDA_PLUGIN_EXPORT int getPluginApiVersion() { \
+        return NDA_PLUGIN_API_VERSION; \
     }
 
 #endif // BASEPLUGIN_H

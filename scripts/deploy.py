@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-NADE Deployment Script
+NDA Deployment Script
 Creates a ready-to-ship package with all necessary files
 """
 
@@ -12,13 +12,13 @@ from pathlib import Path
 
 def main():
     print("=" * 60)
-    print("NADE Deployment Script")
+    print("NDA Deployment Script")
     print("=" * 60)
     print()
 
     # Determine platform
     is_windows = platform.system() == "Windows"
-    exe_name = "NADE.exe" if is_windows else "NADE"
+    exe_name = "NDA.exe" if is_windows else "NDA"
 
     # Paths
     base_dir = Path(__file__).parent
@@ -36,6 +36,8 @@ def main():
     print(f"Copying {exe_name}...")
     if is_windows:
         exe_src = build_dir / "Release" / exe_name
+        if not exe_src.exists():
+            exe_src = build_dir / exe_name
     else:
         exe_src = build_dir / exe_name
 
@@ -60,6 +62,16 @@ def main():
     else:
         print(f"  ✗ plugins_py directory not found")
         return 1
+
+    # Copy C++ plugin DLLs (if built)
+    if is_windows:
+        cpp_plugins_dir = build_dir / "plugins"
+        if cpp_plugins_dir.exists():
+            for dll in cpp_plugins_dir.glob("*.dll"):
+                shutil.copy2(dll, plugins_dest / dll.name)
+                print(f"  V {dll.name}")
+        else:
+            print(f"  ? No C++ plugin directory found at {cpp_plugins_dir}")
 
     # Copy requirements.txt
     print("Copying requirements.txt...")
@@ -105,42 +117,48 @@ def main():
     print("\nCreating launcher scripts...")
 
     # Windows launcher
-    launcher_bat = ship_dir / "NADE.bat"
+    launcher_bat = ship_dir / "NDA.bat"
     with open(launcher_bat, 'w') as f:
         f.write('@echo off\n')
         f.write('cd /d "%~dp0"\n')
-        f.write('bin\\NADE.exe\n')
+        f.write('bin\\\\NDA.exe\n')
         f.write('pause\n')
-    print(f"  ✓ NADE.bat")
+    print(f"  ✓ NDA.bat")
 
     # Linux/Mac launcher
-    launcher_sh = ship_dir / "NADE.sh"
+    launcher_sh = ship_dir / "NDA.sh"
     with open(launcher_sh, 'w') as f:
         f.write('#!/bin/bash\n')
         f.write('cd "$(dirname "$0")"\n')
         f.write('export PYTHONPATH="$PWD/plugins:$PYTHONPATH"\n')
-        f.write('./bin/NADE\n')
+        f.write('./bin/NDA\n')
     os.chmod(launcher_sh, 0o755)
-    print(f"  ✓ NADE.sh")
+    print(f"  ✓ NDA.sh")
 
     # Create version info
     print("\nCreating version info...")
     version_file = ship_dir / "VERSION.txt"
     with open(version_file, 'w') as f:
-        f.write("NADE - Plugin-Based Audio Encryption System\n")
+        f.write("NDA - Plugin-Based Audio Encryption System\n")
         f.write("Version: 1.0.0\n")
         f.write(f"Platform: {platform.system()} {platform.machine()}\n")
         f.write(f"Python: {sys.version.split()[0]}\n")
     print("  ✓ VERSION.txt")
 
     # Summary
+    py_plugin_count = len(list(plugins_dest.glob('*.py')))
+    cpp_plugin_count = len(list(plugins_dest.glob('*.dll'))) if is_windows else 0
+
     print("\n" + "=" * 60)
     print("DEPLOYMENT COMPLETE")
     print("=" * 60)
     print(f"\nPackage location: {ship_dir}")
     print("\nContents:")
     print(f"  - bin/{exe_name}")
-    print(f"  - plugins/ ({len(list(plugins_dest.glob('*.py')))} files)")
+    if is_windows:
+        print(f"  - plugins/ ({py_plugin_count} python, {cpp_plugin_count} C++ DLLs)")
+    else:
+        print(f"  - plugins/ ({py_plugin_count} python files)")
     print(f"  - docs/ (documentation)")
     print(f"  - requirements.txt")
     print(f"  - Launcher scripts")
@@ -149,11 +167,11 @@ def main():
     if is_windows:
         print("  1. Run windeployqt.exe to copy Qt DLLs")
         print("  2. Copy Python and OpenSSL DLLs")
-        print("  3. Test: readytoship\\NADE.bat")
-        print("  4. Package: zip -r NADE-Windows.zip readytoship/")
+        print("  3. Test: readytoship\\NDA.bat")
+        print("  4. Package: zip -r NDA-Windows.zip readytoship/")
     else:
-        print("  1. Test: cd readytoship && ./NADE.sh")
-        print("  2. Package: tar -czf NADE-Linux.tar.gz readytoship/")
+        print("  1. Test: cd readytoship && ./NDA.sh")
+        print("  2. Package: tar -czf NDA-Linux.tar.gz readytoship/")
 
     print("\n✓ Done!")
     return 0

@@ -1,6 +1,10 @@
+.specstory/
+.pyuser/
+
 # Build directories
 build/
 build-*/
+debug*/
 cmake-build-*/
 
 # CMake
@@ -38,6 +42,24 @@ ui_*.h
 *.swp
 *.swo
 *~
+
+# Python files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+
+# Cython generated files
+plugins_py/*.c
+plugins_py/**/*.c
+.cython_cache/
+
+# Legacy packages (removed in V2)
+packages/
+
+# Recording artifacts
+recording_*.wav
 
 # OS files
 .DS_Store

@@ -3,7 +3,7 @@
 #include <iomanip>
 #include <cmath>
 
-namespace NADE {
+namespace nda {
 
 class NullSinkPlugin : public AudioSinkPlugin {
 public:
@@ -54,10 +54,10 @@ public:
         return {
             "Null Sink (Console Monitor)",
             "1.0.0",
-            "NADE Team",
+            "Icing Project",
             "Discards audio but shows metrics in console",
             PluginType::AudioSink,
-            NADE_PLUGIN_API_VERSION
+            NDA_PLUGIN_API_VERSION
         };
     }
 
@@ -144,7 +144,7 @@ private:
     bool showMetrics_;
 };
 
-} // namespace NADE
+} // namespace nda
 
 // Export the plugin
-NADE_DECLARE_PLUGIN(NADE::NullSinkPlugin)
+NDA_DECLARE_PLUGIN(nda::NullSinkPlugin)

@@ -1,14 +1,12 @@
 #ifndef PLUGINTYPES_H
 #define PLUGINTYPES_H
 
-namespace NADE {
+namespace nda {
 
 enum class PluginType {
     AudioSource,    // Audio input (microphone, file, streaming service)
     AudioSink,      // Audio output (speakers, file, network)
-    Bearer,         // Network/transport simulation (TCP, UDP, custom protocols)
-    Encryptor,      // Encryption/decryption module
-    Processor       // Generic audio processor (effects, filters)
+    Processor       // Audio transformation (encryption, effects, resampling, etc.)
 };
 
 enum class PluginState {
@@ -19,6 +17,6 @@ enum class PluginState {
     Error
 };
 
-} // namespace NADE
+} // namespace nda
 
 #endif // PLUGINTYPES_H

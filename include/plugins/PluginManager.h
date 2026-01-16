@@ -3,15 +3,14 @@
 
 #include "BasePlugin.h"
 #include "AudioSourcePlugin.h"
-#include "BearerPlugin.h"
-#include "EncryptorPlugin.h"
+#include "AudioProcessorPlugin.h"
 #include "AudioSinkPlugin.h"
 #include <string>
 #include <vector>
 #include <memory>
 #include <map>
 
-namespace NADE {
+namespace nda {
 
 struct LoadedPlugin {
     std::string path;
@@ -41,11 +40,13 @@ public:
     std::shared_ptr<BasePlugin> getPlugin(const std::string& name);
     std::vector<LoadedPlugin> getAllPlugins() const;
 
-    // Typed plugin getters
+    // Typed plugin getters (creates NEW instances for each call)
     std::shared_ptr<AudioSourcePlugin> getAudioSourcePlugin(const std::string& name);
-    std::shared_ptr<BearerPlugin> getBearerPlugin(const std::string& name);
-    std::shared_ptr<EncryptorPlugin> getEncryptorPlugin(const std::string& name);
+    std::shared_ptr<AudioProcessorPlugin> getAudioProcessorPlugin(const std::string& name);
     std::shared_ptr<AudioSinkPlugin> getAudioSinkPlugin(const std::string& name);
+    
+    // Create new instance from loaded plugin
+    std::shared_ptr<BasePlugin> createNewInstance(const std::string& name);
 
 private:
     bool validatePlugin(BasePlugin* plugin);
@@ -54,13 +55,13 @@ private:
 
     // Plugin loading helpers
     bool loadCppPlugin(const std::string& path);
-#ifdef NADE_ENABLE_PYTHON
+#ifdef NDA_ENABLE_PYTHON
     bool loadPythonPlugin(const std::string& path);
 #endif
 
     std::map<std::string, LoadedPlugin> plugins_;
 };
 
-} // namespace NADE
+} // namespace nda
 
 #endif // PLUGINMANAGER_H

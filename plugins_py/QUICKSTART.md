@@ -1,6 +1,6 @@
-# Quick Start Guide - NADE Python Plugins
+# Quick Start Guide - NDA Python Plugins
 
-Get started with NADE Python plugins in 5 minutes!
+Get started with NDA Python plugins in 5 minutes!
 
 ## 1. Install Dependencies
 
@@ -18,7 +18,7 @@ cd plugins_py
 
 Or manually:
 ```bash
-pip install numpy pyaudio
+pip install -r requirements.txt
 ```
 
 ## 2. Test Plugins
@@ -29,19 +29,18 @@ python test_plugins.py
 
 You should see:
 - List of available plugins
-- Sine wave generator test (3 seconds)
-- WAV file recording test (2 seconds)
-- A new WAV file: `recording_YYYYMMDD_HHMMSS.wav`
+- Sine wave generator test (~2 seconds)
+- WAV file recording test (~1 second)
+- A new WAV file: `test_recording.wav`
 
 ## 3. Use from Python
 
 ```python
-from plugin_loader import PluginLoader
 from base_plugin import AudioBuffer
 
-# Load plugin
-loader = PluginLoader(".")
-plugin = loader.load_plugin("sine_wave_source")
+# Import and create plugin directly
+from sine_wave_source import create_plugin
+plugin = create_plugin()
 
 # Initialize and start
 plugin.initialize()
@@ -53,22 +52,22 @@ plugin.read_audio(buffer)
 
 # Stop
 plugin.stop()
-loader.unload_all()
+plugin.shutdown()
 ```
 
 ## 4. Use from C++ Application
 
-### Build NADE with Python Support
+### Build NDA with Python Support
 
 ```bash
 # Linux
 mkdir build && cd build
-cmake .. -DNADE_ENABLE_PYTHON=ON
+cmake .. -DNDA_ENABLE_PYTHON=ON
 make
 
 # Windows
 mkdir build && cd build
-cmake .. -DNADE_ENABLE_PYTHON=ON -G "Visual Studio 17 2022"
+cmake .. -DNDA_ENABLE_PYTHON=ON -G "Visual Studio 17 2022"
 cmake --build . --config Release
 ```
 
@@ -101,6 +100,10 @@ delete plugin;
 | `wav_file_sink` | Sink | WAV file recorder |
 | `pulseaudio_microphone` | Source | Mic input |
 | `pulseaudio_speaker` | Sink | Speaker output |
+| `sounddevice_microphone` | Source | Mic input via sounddevice (PortAudio) |
+| `sounddevice_speaker` | Sink | Speaker output via sounddevice (PortAudio) |
+| `soundcard_microphone` | Source | Mic input via soundcard (WASAPI/PulseAudio) |
+| `soundcard_speaker` | Sink | Speaker output via soundcard (WASAPI/PulseAudio) |
 
 ## 6. Create Your Own Plugin
 
@@ -156,13 +159,13 @@ class MyPlugin(AudioSourcePlugin):
     def get_sample_rate(self) -> int:
         return self.sample_rate
 
-    def get_channels(self) -> int:
+    def get_channel_count(self) -> int:
         return self.channels
 
     def set_sample_rate(self, sr: int):
         self.sample_rate = sr
 
-    def set_channels(self, ch: int):
+    def set_channel_count(self, ch: int):
         self.channels = ch
 
 def create_plugin():
@@ -172,7 +175,8 @@ def create_plugin():
 Save as `my_plugin.py` in `plugins_py/` directory, then:
 
 ```python
-plugin = loader.load_plugin("my_plugin")
+from my_plugin import create_plugin
+plugin = create_plugin()
 ```
 
 ## Troubleshooting
@@ -197,6 +201,13 @@ sudo dnf install python3-pyaudio
 sudo apt install python3-pyaudio
 ```
 
+### "Module not found: soundcard"
+```bash
+pip install soundcard
+```
+
+Linux note: soundcard needs PulseAudio, or PipeWire with `pipewire-pulse` enabled.
+
 ### Plugins not loading from C++
 - Make sure `plugins_py` directory is in your working directory
 - Check that Python is in PATH
@@ -204,7 +215,7 @@ sudo apt install python3-pyaudio
 
 ## Next Steps
 
-- Read [PYTHON_PLUGINS.md](../PYTHON_PLUGINS.md) for detailed documentation
-- Check [examples/python_plugin_example.cpp](../examples/python_plugin_example.cpp)
+- Read [docs/development/python-plugins.md](../docs/development/python-plugins.md) for detailed documentation
+- Check the [examples/](examples/) directory for sample plugins
 - Explore the plugin source code
 - Create your own custom plugins!

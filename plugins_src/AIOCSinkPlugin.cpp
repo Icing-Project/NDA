@@ -1,0 +1,312 @@
+#include "plugins/AudioSinkPlugin.h"
+#include "AIOCPluginCommon.h"
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <iostream>
+
+namespace nda {
+
+class AIOCSinkPlugin : public AudioSinkPlugin {
+public:
+    AIOCSinkPlugin()
+        : state_(PluginState::Unloaded),
+          sampleRate_(48000),
+          channels_(1),
+          bufferFrames_(512),
+          pttArmed_(false),
+          lastPttSent_(false),
+          pttMode_(AIOCPttMode::HidManual),
+          loopbackTest_(false),
+          spaceAvailableThreshold_(512)
+    {
+        // v2.2: Use default WASAPI render device initially
+        // User can select specific AIOC device via PluginSidebar UI
+        // COM port will be set by user or auto-detected
+        session_.setSampleRate(sampleRate_);
+        session_.setChannels(channels_);
+        session_.setBufferFrames(bufferFrames_);
+        session_.setPttMode(pttMode_);
+    }
+
+    ~AIOCSinkPlugin() override {
+        if (state_ != PluginState::Unloaded) {
+            shutdown();
+        }
+    }
+
+    bool initialize() override {
+        if (state_ != PluginState::Unloaded && state_ != PluginState::Initialized) {
+            return false;
+        }
+        session_.setSampleRate(sampleRate_);
+        session_.setChannels(channels_);
+        session_.setBufferFrames(bufferFrames_);
+        session_.setPttMode(pttMode_);
+        state_ = PluginState::Initialized;
+        return true;
+    }
+
+    void shutdown() override {
+        stop();
+        session_.disconnect();
+        state_ = PluginState::Unloaded;
+    }
+
+    bool start() override {
+        if (state_ != PluginState::Initialized) return false;
+        if (!session_.isConnected() && !session_.connect()) {
+            state_ = PluginState::Error;
+            std::cerr << "[AIOCSink] Failed to connect to AIOC device: "
+                      << session_.getTelemetry().lastMessage << std::endl;
+            return false;
+        }
+        if (!session_.start()) {
+            state_ = PluginState::Error;
+            return false;
+        }
+        state_ = PluginState::Running;
+        return true;
+    }
+
+    void stop() override {
+        if (state_ == PluginState::Running) {
+            session_.setPttState(false);
+            session_.stop();
+            state_ = PluginState::Initialized;
+        }
+    }
+
+    PluginInfo getInfo() const override {
+        return {
+            "AIOC Sink",
+            "0.1.0",
+            "Icing Project",
+            "Writes audio to AIOC (USB speaker) and manages PTT/VOX",
+            PluginType::AudioSink,
+            NDA_PLUGIN_API_VERSION
+        };
+    }
+
+    PluginState getState() const override {
+        return state_;
+    }
+
+    void setParameter(const std::string& key, const std::string& value) override {
+        if (key == "sampleRate") {
+            sampleRate_ = std::stoi(value);
+            session_.setSampleRate(sampleRate_);
+        } else if (key == "channels") {
+            channels_ = std::stoi(value);
+            session_.setChannels(channels_);
+        } else if (key == "bufferFrames") {
+            bufferFrames_ = std::stoi(value);
+            session_.setBufferFrames(bufferFrames_);
+        } else if (key == "volume_out") {
+            session_.setVolumeOut(std::stof(value));
+        } else if (key == "mute_out") {
+            session_.setMuteOut(value == "true" || value == "1");
+        } else if (key == "ptt_state") {
+            pttArmed_ = (value == "true" || value == "1");
+            if (pttMode_ != AIOCPttMode::VpttAuto) {
+                session_.setPttState(pttArmed_);
+            }
+        } else if (key == "ptt_mode") {
+            if (value == "hid_manual") {
+                pttMode_ = AIOCPttMode::HidManual;
+            } else if (value == "cdc_manual") {
+                pttMode_ = AIOCPttMode::CdcManual;
+            } else if (value == "vptt_auto") {
+                pttMode_ = AIOCPttMode::VpttAuto;
+            }
+            session_.setPttMode(pttMode_);
+        } else if (key == "device_id") {
+            std::string oldId = session_.deviceOutId();
+            std::cerr << "[AIOCSink] setParameter device_id: '" << value << "' (old: '" << oldId
+                      << "', state: " << static_cast<int>(state_) << ")" << std::endl;
+            session_.setDeviceIds(session_.deviceInId(), value);
+            // v2.2: Reconnect to new device if currently running
+            if (state_ == PluginState::Running && value != oldId && !value.empty()) {
+                std::cerr << "[AIOCSink] Device changed while running, reconnecting..." << std::endl;
+                session_.stop();
+                session_.disconnect();
+                if (session_.connect() && session_.start()) {
+                    std::cerr << "[AIOCSink] Successfully switched to new device" << std::endl;
+                } else {
+                    std::cerr << "[AIOCSink] Failed to switch device" << std::endl;
+                    state_ = PluginState::Error;
+                }
+            }
+        } else if (key == "cdc_port") {
+            session_.setCdcPort(value);
+        } else if (key == "vptt_threshold") {
+            session_.setVpttThreshold(static_cast<uint32_t>(std::stoul(value)));
+        } else if (key == "vptt_hang_ms") {
+            session_.setVpttHangMs(static_cast<uint32_t>(std::stoul(value)));
+        } else if (key == "loopback_test") {
+            loopbackTest_ = (value == "true" || value == "1");
+            session_.enableLoopback(loopbackTest_);
+        }
+    }
+
+    std::string getParameter(const std::string& key) const override {
+        if (key == "sampleRate") return std::to_string(sampleRate_);
+        if (key == "channels") return std::to_string(channels_);
+        if (key == "bufferFrames") return std::to_string(bufferFrames_);
+        if (key == "volume_out") return std::to_string(session_.volumeOut());
+        if (key == "mute_out") return session_.muteOut() ? "true" : "false";
+        if (key == "ptt_state") return pttArmed_ ? "true" : "false";
+        if (key == "ptt_mode") return modeToString(pttMode_);
+        if (key == "device_id") return session_.deviceOutId();
+        if (key == "cdc_port") return session_.cdcPort();
+        if (key == "vptt_threshold") return std::to_string(session_.vpttThreshold());
+        if (key == "vptt_hang_ms") return std::to_string(session_.vpttHangMs());
+        if (key == "loopback_test") return loopbackTest_ ? "true" : "false";
+        return "";
+    }
+
+    bool writeAudio(const AudioBuffer& buffer) override {
+        if (state_ != PluginState::Running) {
+            return false;
+        }
+
+        // Prepare a mutable copy to apply gain/mute if needed.
+        AudioBuffer work(buffer.getChannelCount(), buffer.getFrameCount());
+        work.copyFrom(buffer);
+
+        if (session_.muteOut() || session_.volumeOut() != 1.0f) {
+            float gain = session_.muteOut() ? 0.0f : session_.volumeOut();
+            int frames = work.getFrameCount();
+            int chans = work.getChannelCount();
+            for (int ch = 0; ch < chans; ++ch) {
+                float* channelData = work.getChannelData(ch);
+                for (int i = 0; i < frames; ++i) {
+                    channelData[i] *= gain;
+                }
+            }
+        }
+
+        handlePtt(work);
+        return session_.writePlayback(work);
+    }
+
+    int getSampleRate() const override { return sampleRate_; }
+    int getChannels() const override { return channels_; }
+    void setSampleRate(int sampleRate) override {
+        if (state_ == PluginState::Unloaded || state_ == PluginState::Initialized) {
+            sampleRate_ = sampleRate;
+            session_.setSampleRate(sampleRate_);
+        }
+    }
+    void setChannels(int channels) override {
+        if (state_ == PluginState::Unloaded || state_ == PluginState::Initialized) {
+            channels_ = channels;
+            session_.setChannels(channels_);
+        }
+    }
+    int getBufferSize() const override { return bufferFrames_; }
+    void setBufferSize(int samples) override {
+        if (state_ == PluginState::Unloaded || state_ == PluginState::Initialized) {
+            bufferFrames_ = samples;
+            session_.setBufferFrames(bufferFrames_);
+        }
+    }
+    int getAvailableSpace() const override {
+        if (state_ != PluginState::Running) return 0;
+        // v2.2: Return ring buffer space (not bufferFrames_)
+        return session_.getPlaybackRingBufferAvailable();
+    }
+
+    // v2.2: Event-driven async mode support
+    bool supportsAsyncMode() const override {
+        return true;  // Ring buffer + background thread
+    }
+
+    bool isNonBlocking() const override {
+        return true;  // writeAudio() writes to ring buffer, never blocks WASAPI
+    }
+
+    void setSpaceAvailableCallback(SpaceAvailableCallback callback) override {
+        spaceAvailableCallback_ = callback;
+        session_.setSpaceAvailableCallback(callback);  // Propagate to AIOCSession
+    }
+
+private:
+    // v2.2: Only send PTT state to HID when it actually changes
+    void sendPttIfChanged(bool newState) {
+        if (newState != lastPttSent_) {
+            lastPttSent_ = newState;
+            session_.setPttState(newState);
+        }
+    }
+
+    void handlePtt(const AudioBuffer& buffer) {
+        if (pttMode_ == AIOCPttMode::VpttAuto) {
+            auto now = std::chrono::steady_clock::now();
+            float peak = measurePeak(buffer);
+            float threshold = static_cast<float>(session_.vpttThreshold()) / 32768.0f;
+
+            if (peak >= threshold) {
+                sendPttIfChanged(true);
+                lastVoice_ = now;
+                return;
+            }
+
+            if (session_.vpttHangMs() == 0) {
+                sendPttIfChanged(false);
+                return;
+            }
+
+            if (session_.isPttAsserted()) {
+                auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastVoice_).count();
+                if (elapsed > session_.vpttHangMs()) {
+                    sendPttIfChanged(false);
+                }
+            }
+        } else {
+            // Manual PTT mode - only send when state changes
+            sendPttIfChanged(pttArmed_);
+        }
+    }
+
+    float measurePeak(const AudioBuffer& buffer) const {
+        int frames = buffer.getFrameCount();
+        int chans = buffer.getChannelCount();
+        float peak = 0.0f;
+        for (int ch = 0; ch < chans; ++ch) {
+            const float* channelData = buffer.getChannelData(ch);
+            for (int i = 0; i < frames; ++i) {
+                peak = std::max(peak, std::abs(channelData[i]));
+            }
+        }
+        return peak;
+    }
+
+    std::string modeToString(AIOCPttMode mode) const {
+        switch (mode) {
+            case AIOCPttMode::HidManual: return "hid_manual";
+            case AIOCPttMode::CdcManual: return "cdc_manual";
+            case AIOCPttMode::VpttAuto: return "vptt_auto";
+        }
+        return "hid_manual";
+    }
+
+    PluginState state_;
+    int sampleRate_;
+    int channels_;
+    int bufferFrames_;
+    bool pttArmed_;
+    bool lastPttSent_;  // v2.2: Track last PTT state sent to HID to avoid spam
+    AIOCPttMode pttMode_;
+    bool loopbackTest_;
+    std::chrono::steady_clock::time_point lastVoice_;
+    AIOCSession session_;
+
+    // v2.2: Event-driven members
+    SpaceAvailableCallback spaceAvailableCallback_;
+    int spaceAvailableThreshold_;
+};
+
+} // namespace nda
+
+NDA_DECLARE_PLUGIN(nda::AIOCSinkPlugin)

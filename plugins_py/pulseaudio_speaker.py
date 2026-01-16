@@ -3,6 +3,10 @@ PulseAudio Speaker Plugin - Python Implementation
 Plays audio through system speakers using PulseAudio
 """
 
+import sys
+
+PLATFORM_SUPPORTED = sys.platform.startswith("linux")
+
 try:
     import pyaudio
     PYAUDIO_AVAILABLE = True
@@ -22,15 +26,24 @@ class PulseAudioSpeakerPlugin(AudioSinkPlugin):
     def __init__(self):
         super().__init__()
         self.sample_rate = 48000
-        self.channels = 2
+        self.channel_count = 2
         self.buffer_size = 512
         self.pyaudio_instance = None
         self.stream = None
 
     def initialize(self) -> bool:
         """Initialize the plugin"""
+        if not PLATFORM_SUPPORTED:
+            print(
+                "[PulseAudioSpeaker] PulseAudio plugin is Linux-only. "
+                "Use sounddevice_speaker on Windows/macOS.",
+                flush=True,
+            )
+            self.state = PluginState.ERROR
+            return False
+
         if not PYAUDIO_AVAILABLE:
-            print("[PulseAudioSpeaker] PyAudio not available. Install with: pip install pyaudio")
+            print("[PulseAudioSpeaker] PyAudio not available. Install with: pip install pyaudio", flush=True)
             self.state = PluginState.ERROR
             return False
 
@@ -59,7 +72,7 @@ class PulseAudioSpeakerPlugin(AudioSinkPlugin):
         try:
             self.stream = self.pyaudio_instance.open(
                 format=pyaudio.paFloat32,
-                channels=self.channels,
+                channels=self.channel_count,
                 rate=self.sample_rate,
                 output=True,
                 frames_per_buffer=self.buffer_size,
@@ -67,7 +80,7 @@ class PulseAudioSpeakerPlugin(AudioSinkPlugin):
             )
 
             self.state = PluginState.RUNNING
-            print(f"[PulseAudioSpeaker] Started - {self.sample_rate}Hz, {self.channels} channels", flush=True)
+            print(f"[PulseAudioSpeaker] Started - {self.sample_rate}Hz, {self.channel_count} channels", flush=True)
             return True
         except Exception as e:
             print(f"[PulseAudioSpeaker] Failed to start stream: {e}", flush=True)
@@ -105,8 +118,8 @@ class PulseAudioSpeakerPlugin(AudioSinkPlugin):
         """Get plugin information"""
         return PluginInfo(
             name="PulseAudio Speaker Output",
-            version="1.0.0",
-            author="NADE Team",
+            version="2.0.0",
+            author="Icing Project",
             description="Plays audio through system speakers using PulseAudio",
             plugin_type=PluginType.AUDIO_SINK,
             api_version=1
@@ -114,14 +127,28 @@ class PulseAudioSpeakerPlugin(AudioSinkPlugin):
 
     def set_parameter(self, key: str, value: str):
         """Set plugin parameter"""
-        pass
+        if key == "bufferSize":
+            try:
+                self.set_buffer_size(int(value))
+            except ValueError:
+                pass
+        elif key == "sampleRate":
+            try:
+                self.set_sample_rate(int(value))
+            except ValueError:
+                pass
+        elif key == "channels":
+            try:
+                self.set_channel_count(int(value))
+            except ValueError:
+                pass
 
     def get_parameter(self, key: str) -> str:
         """Get plugin parameter"""
         if key == "sampleRate":
             return str(self.sample_rate)
         elif key == "channels":
-            return str(self.channels)
+            return str(self.channel_count)
         elif key == "bufferSize":
             return str(self.buffer_size)
         return ""
@@ -151,19 +178,19 @@ class PulseAudioSpeakerPlugin(AudioSinkPlugin):
         """Get sample rate"""
         return self.sample_rate
 
-    def get_channels(self) -> int:
+    def get_channel_count(self) -> int:
         """Get number of channels"""
-        return self.channels
+        return self.channel_count
 
     def set_sample_rate(self, sample_rate: int):
         """Set sample rate"""
         if self.state in (PluginState.UNLOADED, PluginState.INITIALIZED):
             self.sample_rate = sample_rate
 
-    def set_channels(self, channels: int):
+    def set_channel_count(self, channels: int):
         """Set number of channels"""
         if self.state in (PluginState.UNLOADED, PluginState.INITIALIZED):
-            self.channels = channels
+            self.channel_count = max(1, channels)
 
     def get_buffer_size(self) -> int:
         """Get buffer size"""
@@ -172,7 +199,7 @@ class PulseAudioSpeakerPlugin(AudioSinkPlugin):
     def set_buffer_size(self, samples: int):
         """Set buffer size"""
         if self.state in (PluginState.UNLOADED, PluginState.INITIALIZED):
-            self.buffer_size = samples
+            self.buffer_size = max(64, samples)
 
     def get_available_space(self) -> int:
         """Get available space"""

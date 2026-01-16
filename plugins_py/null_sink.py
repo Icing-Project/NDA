@@ -16,7 +16,7 @@ class NullSinkPlugin(AudioSinkPlugin):
     def __init__(self):
         super().__init__()
         self.sample_rate = 48000
-        self.channels = 2
+        self.channel_count = 2
         self.buffer_size = 512
         self.frames_processed = 0
         self.show_metrics = True
@@ -52,7 +52,7 @@ class NullSinkPlugin(AudioSinkPlugin):
         return PluginInfo(
             name="Null Sink (Console Monitor)",
             version="1.0.0",
-            author="NADE Team",
+            author="Icing Project",
             description="Discards audio but shows metrics in console",
             plugin_type=PluginType.AUDIO_SINK,
             api_version=1
@@ -68,7 +68,7 @@ class NullSinkPlugin(AudioSinkPlugin):
         if key == "sampleRate":
             return str(self.sample_rate)
         elif key == "channels":
-            return str(self.channels)
+            return str(self.channel_count)
         elif key == "bufferSize":
             return str(self.buffer_size)
         elif key == "showMetrics":
@@ -85,12 +85,11 @@ class NullSinkPlugin(AudioSinkPlugin):
 
         # Calculate RMS level for monitoring (every 0.1 seconds)
         if self.show_metrics and self.frames_processed % (self.sample_rate // 10) == 0:
-            # Calculate RMS for left channel
+            # Calculate RMS per channel, handle mono safely
             left_channel = buffer.get_channel_data(0)
             rms_l = np.sqrt(np.mean(left_channel ** 2))
 
-            # Calculate RMS for right channel
-            if self.channels > 1:
+            if buffer.get_channel_count() > 1:
                 right_channel = buffer.get_channel_data(1)
                 rms_r = np.sqrt(np.mean(right_channel ** 2))
             else:
@@ -109,19 +108,19 @@ class NullSinkPlugin(AudioSinkPlugin):
         """Get sample rate"""
         return self.sample_rate
 
-    def get_channels(self) -> int:
+    def get_channel_count(self) -> int:
         """Get number of channels"""
-        return self.channels
+        return self.channel_count
 
     def set_sample_rate(self, sample_rate: int):
         """Set sample rate"""
         if self.state in (PluginState.UNLOADED, PluginState.INITIALIZED):
             self.sample_rate = sample_rate
 
-    def set_channels(self, channels: int):
+    def set_channel_count(self, channels: int):
         """Set number of channels"""
         if self.state in (PluginState.UNLOADED, PluginState.INITIALIZED):
-            self.channels = channels
+            self.channel_count = channels
 
     def get_buffer_size(self) -> int:
         """Get buffer size"""
