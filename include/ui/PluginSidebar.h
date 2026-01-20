@@ -59,7 +59,16 @@ private:
     // v2.2: AIOC-specific UI helpers
     void addAIOCDeviceSelector(const QString& label, const QString& key, int direction);
     void addPTTModeSelector(const QString& label, const QString& key);
-    
+
+    // v2.3: Linux PulseAudio device selector
+    void addPulseDeviceSelector(const QString& label, const QString& key, bool isSource);
+
+    // v2.3: Windows WASAPI device selector (generic, for Microphone/Speaker plugins)
+    void addWASAPIDeviceSelector(const QString& label, const QString& key, int direction);
+
+    // v2.4: Linux AIOC PTT mode selector (HID/CDC/Auto)
+    void addLinuxPTTModeSelector(const QString& label, const QString& key);
+
     void applyModernStyles();
 
     // RAII guard for exception-safe isUpdating_ management

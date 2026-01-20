@@ -13,7 +13,29 @@
       "Bash(pip3 install:*)",
       "Bash(sudo apt-get install:*)",
       "Bash(git -C /mnt/c/Users/Steph/Desktop/Icing/Dev/NDA status --short)",
-      "Bash(cmake --build:*)"
+      "Bash(cmake --build:*)",
+      "Bash(/usr/bin/cmake:*)",
+      "Bash(dnf list:*)",
+      "Bash(cmake:*)",
+      "Bash(command -v:*)",
+      "Bash(pkg-config:*)",
+      "Bash(sudo dnf install:*)",
+      "Bash(sudo apt install:*)",
+      "Bash(apt list:*)",
+      "Bash(make:*)",
+      "Bash(lsusb:*)",
+      "Bash(dmesg:*)",
+      "Bash(lsmod:*)",
+      "Bash(for d in /sys/bus/usb/devices/*)",
+      "Bash(do if [ -f \"$d/idVendor\" ])",
+      "Bash(then echo \"Found AIOC at: $d\" cat \"$d/idVendor\" \"$d/idProduct\" \"$d/product\" ls \"$d/\")",
+      "Bash(fi)",
+      "Bash(done)",
+      "Bash(# Check current device permissions ls -la /dev/ttyACM0 /dev/hidraw4 # Check user/group id # Test if we can read hidraw4 \\(the one with slightly better perms\\) cat /dev/hidraw4 2>&1)",
+      "Bash(test:*)",
+      "Bash(flatpak-spawn --host cat:*)",
+      "Bash(cat:*)",
+      "Bash(ldd:*)"
     ]
   }
 }

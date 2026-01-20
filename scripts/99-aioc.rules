@@ -1,0 +1,21 @@
+# AIOC (All-In-One-Cable) udev rules for non-root access
+# Copy this file to /etc/udev/rules.d/99-aioc.rules and run:
+#   sudo udevadm control --reload-rules
+#   sudo udevadm trigger
+#
+# AIOC USB identifiers:
+#   VID: 0x1209 (Generic)
+#   PID: 0x7388 (AIOC)
+
+# USB device rule - allows general access to the device
+SUBSYSTEM=="usb", ATTR{idVendor}=="1209", ATTR{idProduct}=="7388", MODE="0666", TAG+="uaccess"
+
+# HID (Human Interface Device) rule - allows HID PTT control
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="7388", MODE="0666", TAG+="uaccess"
+
+# Serial/CDC ACM rule - allows CDC PTT control via /dev/ttyACM*
+# Also creates a convenient /dev/aioc symlink
+KERNEL=="ttyACM[0-9]*", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="7388", MODE="0666", SYMLINK+="aioc", TAG+="uaccess"
+
+# Alternative: ttyUSB for FTDI-based AIOC variants (if any)
+KERNEL=="ttyUSB[0-9]*", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="7388", MODE="0666", SYMLINK+="aioc", TAG+="uaccess"
