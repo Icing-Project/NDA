@@ -94,11 +94,45 @@ if(NOT WIN32)
         else()
             message(STATUS "libsamplerate not found - Using Simple/Medium quality only")
         endif()
+
+        # Linux audio support via PulseAudio
+        pkg_check_modules(PULSEAUDIO libpulse)
+        if(PULSEAUDIO_FOUND)
+            message(STATUS "PulseAudio found - Linux audio plugins available")
+            message(STATUS "  PulseAudio version: ${PULSEAUDIO_VERSION}")
+            set(LINUX_AUDIO_AVAILABLE TRUE)
+        else()
+            message(STATUS "PulseAudio not found - Linux audio plugins disabled")
+            message(STATUS "  Install with: sudo dnf install pulseaudio-libs-devel (Fedora)")
+            message(STATUS "             or: sudo apt install libpulse-dev (Ubuntu/Debian)")
+            set(LINUX_AUDIO_AVAILABLE FALSE)
+        endif()
+
+        # Linux HID support via hidapi (for AIOC PTT control)
+        pkg_check_modules(HIDAPI hidapi-libusb)
+        if(NOT HIDAPI_FOUND)
+            # Try alternative package name (some distros use hidapi instead of hidapi-libusb)
+            pkg_check_modules(HIDAPI hidapi)
+        endif()
+        if(HIDAPI_FOUND)
+            message(STATUS "hidapi found - Linux AIOC PTT control available")
+            message(STATUS "  hidapi version: ${HIDAPI_VERSION}")
+            set(LINUX_HIDAPI_AVAILABLE TRUE)
+        else()
+            message(STATUS "hidapi not found - Linux AIOC PTT control disabled")
+            message(STATUS "  Install with: sudo dnf install hidapi-devel (Fedora)")
+            message(STATUS "             or: sudo apt install libhidapi-dev (Ubuntu/Debian)")
+            set(LINUX_HIDAPI_AVAILABLE FALSE)
+        endif()
     else()
         message(STATUS "pkg-config not found - libsamplerate detection skipped")
+        set(LINUX_AUDIO_AVAILABLE FALSE)
+        set(LINUX_HIDAPI_AVAILABLE FALSE)
     endif()
 else()
     message(STATUS "pkg-config skipped on Windows (libsamplerate optional)")
+    set(LINUX_AUDIO_AVAILABLE FALSE)
+    set(LINUX_HIDAPI_AVAILABLE FALSE)
 endif()
 
 # Find Python and NumPy if Python support is enabled
@@ -165,6 +199,12 @@ if(NDA_ENABLE_PYTHON)
     list(APPEND SOURCES src/plugins/PythonPluginBridge.cpp)
 endif()
 
+# Add Linux audio device enumeration if PulseAudio is available
+if(LINUX_AUDIO_AVAILABLE)
+    list(APPEND SOURCES src/audio/PulseDeviceEnum.cpp)
+    list(APPEND HEADERS include/audio/PulseDeviceEnum.h)
+endif()
+
 # Header files (v2.0: Unified view)
 set(HEADERS
     include/ui/MainWindow.h
@@ -198,6 +238,12 @@ endif()
 # Create executable
 add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS})
 
+# On ELF platforms, export executable symbols so runtime-loaded plugins can
+# resolve references to core functions compiled into the main binary.
+if(UNIX AND NOT APPLE)
+    set_target_properties(${PROJECT_NAME} PROPERTIES ENABLE_EXPORTS ON)
+endif()
+
 # Link libraries
 target_link_libraries(${PROJECT_NAME}
     Qt6::Core
@@ -211,6 +257,12 @@ target_link_libraries(${PROJECT_NAME}
 # Link libsamplerate if available
 if(SAMPLERATE_FOUND)
     target_link_libraries(${PROJECT_NAME} ${SAMPLERATE_LIBRARIES})
+endif()
+
+# Link PulseAudio if available (for device enumeration)
+if(LINUX_AUDIO_AVAILABLE)
+    target_include_directories(${PROJECT_NAME} PRIVATE ${PULSEAUDIO_INCLUDE_DIRS})
+    target_link_libraries(${PROJECT_NAME} ${PULSEAUDIO_LIBRARIES})
 endif()
 
 # Link Python libraries if enabled
@@ -290,6 +342,91 @@ list(APPEND NDA_PLUGIN_TARGETS
     NullSinkPlugin
     WavFileSinkPlugin
 )
+
+# Cross-platform Pipeline Bridge plugins (zero-latency inter-pipeline transfer)
+# The session is a shared library so both plugins share the same singleton instance
+add_library(PipeBridgeSession SHARED
+    plugins_src/bridge/PipeBridgeSession.cpp
+)
+target_include_directories(PipeBridgeSession PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_compile_definitions(PipeBridgeSession PRIVATE PIPEBRIDGE_SESSION_EXPORTS)
+set_target_properties(PipeBridgeSession PROPERTIES
+    LIBRARY_OUTPUT_DIRECTORY ${PLUGIN_OUTPUT_DIR}
+    RUNTIME_OUTPUT_DIRECTORY ${PLUGIN_OUTPUT_DIR}
+    LIBRARY_OUTPUT_DIRECTORY_RELEASE ${PLUGIN_OUTPUT_DIR}
+    LIBRARY_OUTPUT_DIRECTORY_DEBUG ${PLUGIN_OUTPUT_DIR}
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE ${PLUGIN_OUTPUT_DIR}
+    RUNTIME_OUTPUT_DIRECTORY_DEBUG ${PLUGIN_OUTPUT_DIR}
+)
+
+add_nda_plugin(PipeBridgeSinkPlugin
+    plugins_src/bridge/PipeBridgeSink.cpp
+)
+target_link_libraries(PipeBridgeSinkPlugin PipeBridgeSession)
+
+add_nda_plugin(PipeBridgeSourcePlugin
+    plugins_src/bridge/PipeBridgeSource.cpp
+)
+target_link_libraries(PipeBridgeSourcePlugin PipeBridgeSession)
+
+list(APPEND NDA_PLUGIN_TARGETS
+    PipeBridgeSinkPlugin
+    PipeBridgeSourcePlugin
+)
+
+# Linux audio plugins (PulseAudio/PipeWire)
+if(LINUX_AUDIO_AVAILABLE)
+    add_nda_plugin(PulseAudioSourcePlugin
+        plugins_src/linux/PulseAudioSource.cpp
+    )
+    target_include_directories(PulseAudioSourcePlugin PRIVATE ${PULSEAUDIO_INCLUDE_DIRS})
+    target_link_libraries(PulseAudioSourcePlugin ${PULSEAUDIO_LIBRARIES})
+    list(APPEND NDA_PLUGIN_TARGETS PulseAudioSourcePlugin)
+
+    add_nda_plugin(PulseAudioSinkPlugin
+        plugins_src/linux/PulseAudioSink.cpp
+    )
+    target_include_directories(PulseAudioSinkPlugin PRIVATE ${PULSEAUDIO_INCLUDE_DIRS})
+    target_link_libraries(PulseAudioSinkPlugin ${PULSEAUDIO_LIBRARIES})
+    list(APPEND NDA_PLUGIN_TARGETS PulseAudioSinkPlugin)
+
+    message(STATUS "Linux audio plugins enabled: PulseAudioSourcePlugin, PulseAudioSinkPlugin")
+
+    # Linux AIOC plugins (PulseAudio + hidapi for PTT)
+    if(LINUX_HIDAPI_AVAILABLE)
+        add_nda_plugin(LinuxAIOCSourcePlugin
+            plugins_src/linux/LinuxAIOCSourcePlugin.cpp
+            plugins_src/linux/LinuxAIOCSession.cpp
+        )
+        target_include_directories(LinuxAIOCSourcePlugin PRIVATE
+            ${PULSEAUDIO_INCLUDE_DIRS}
+            ${HIDAPI_INCLUDE_DIRS}
+        )
+        target_link_libraries(LinuxAIOCSourcePlugin
+            ${PULSEAUDIO_LIBRARIES}
+            ${HIDAPI_LIBRARIES}
+        )
+        list(APPEND NDA_PLUGIN_TARGETS LinuxAIOCSourcePlugin)
+
+        add_nda_plugin(LinuxAIOCSinkPlugin
+            plugins_src/linux/LinuxAIOCSinkPlugin.cpp
+            plugins_src/linux/LinuxAIOCSession.cpp
+        )
+        target_include_directories(LinuxAIOCSinkPlugin PRIVATE
+            ${PULSEAUDIO_INCLUDE_DIRS}
+            ${HIDAPI_INCLUDE_DIRS}
+        )
+        target_link_libraries(LinuxAIOCSinkPlugin
+            ${PULSEAUDIO_LIBRARIES}
+            ${HIDAPI_LIBRARIES}
+        )
+        list(APPEND NDA_PLUGIN_TARGETS LinuxAIOCSinkPlugin)
+
+        message(STATUS "Linux AIOC plugins enabled: LinuxAIOCSourcePlugin, LinuxAIOCSinkPlugin")
+    else()
+        message(STATUS "Linux AIOC plugins disabled (hidapi not found)")
+    endif()
+endif()
 
 # Add example processor plugins (AES256 Encryptor/Decryptor)
 # add_subdirectory(plugins_src/examples)

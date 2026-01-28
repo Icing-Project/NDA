@@ -96,10 +96,24 @@ public:
             return false;
         }
 
-        // 3. Get default playback device (eRender for output, eConsole for general use)
-        hr = deviceEnum_->GetDefaultAudioEndpoint(eRender, eConsole, &device_);
+        // 3. Get playback device (specific or default)
+        // v2.3: Support device selection via deviceId_ parameter
+        if (!deviceId_.empty()) {
+            // User specified a specific device ID
+            std::wstring wideId(deviceId_.begin(), deviceId_.end());
+            hr = deviceEnum_->GetDevice(wideId.c_str(), &device_);
+            if (FAILED(hr)) {
+                std::cerr << "[WindowsSpeaker] Device '" << deviceId_ << "' not found, falling back to default\n";
+                hr = deviceEnum_->GetDefaultAudioEndpoint(eRender, eConsole, &device_);
+            } else {
+                std::cerr << "[WindowsSpeaker] Using device: " << deviceId_ << "\n";
+            }
+        } else {
+            // Use default playback device (eRender for output, eConsole for general use)
+            hr = deviceEnum_->GetDefaultAudioEndpoint(eRender, eConsole, &device_);
+        }
         if (FAILED(hr)) {
-            std::cerr << "[WindowsSpeaker] No default playback device found: 0x" << std::hex << hr << std::dec << "\n";
+            std::cerr << "[WindowsSpeaker] No playback device found: 0x" << std::hex << hr << std::dec << "\n";
             return false;
         }
 
@@ -440,6 +454,14 @@ public:
         } else if (key == "mute") {
             mute_ = (value == "true" || value == "1");
             std::cerr << "[WindowsSpeaker] Mute set to " << (mute_ ? "true" : "false") << "\n";
+        } else if (key == "device") {
+            // v2.3: Device selection (can only be set before initialize())
+            if (state_ == PluginState::Unloaded) {
+                deviceId_ = value;
+                std::cerr << "[WindowsSpeaker] Device ID set to: " << (value.empty() ? "(default)" : value) << "\n";
+            } else {
+                std::cerr << "[WindowsSpeaker] Cannot change device while initialized\n";
+            }
         }
         // sampleRate, channels, bufferFrames can only be set before initialize()
     }
@@ -449,6 +471,7 @@ public:
 
         if (key == "volume") return std::to_string(volume_);
         if (key == "mute") return mute_ ? "true" : "false";
+        if (key == "device") return deviceId_;  // v2.3: Device selection
         if (key == "sampleRate") return std::to_string(sampleRate_);
         if (key == "channels") return std::to_string(channels_);
         if (key == "bufferSize") return std::to_string(bufferFrames_);
@@ -637,6 +660,7 @@ private:
     int bufferFrames_;
     float volume_;
     bool mute_;
+    std::string deviceId_;  // v2.3: Device selection (empty = default device)
 
     // Metrics
     uint64_t framesWritten_;

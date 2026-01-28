@@ -48,7 +48,9 @@ public:
           comInitialized_(false),
           comOwned_(false),
           // v2.2: Event-driven support
-          dataReadyThreshold_(512)  // Default: notify when 512 frames available
+          dataReadyThreshold_(512),  // Default: notify when 512 frames available
+          // v2.3: Device selection support
+          deviceId_("")  // Empty = use default device
     {
     }
 
@@ -93,10 +95,24 @@ public:
             return false;
         }
 
-        // 3. Get default capture device (eCapture for input, eConsole for general use)
-        hr = deviceEnum_->GetDefaultAudioEndpoint(eCapture, eConsole, &device_);
+        // 3. Get capture device (specific device by ID, or default)
+        if (!deviceId_.empty()) {
+            // v2.3: Use specific device by ID
+            std::wstring wideId(deviceId_.begin(), deviceId_.end());
+            hr = deviceEnum_->GetDevice(wideId.c_str(), &device_);
+            if (FAILED(hr)) {
+                std::cerr << "[WindowsMicrophone] Device '" << deviceId_ << "' not found: 0x"
+                          << std::hex << hr << std::dec << ", falling back to default\n";
+                hr = deviceEnum_->GetDefaultAudioEndpoint(eCapture, eConsole, &device_);
+            } else {
+                std::cerr << "[WindowsMicrophone] Using specified device: " << deviceId_ << "\n";
+            }
+        } else {
+            // Use default capture device
+            hr = deviceEnum_->GetDefaultAudioEndpoint(eCapture, eConsole, &device_);
+        }
         if (FAILED(hr)) {
-            std::cerr << "[WindowsMicrophone] No default capture device found: 0x" << std::hex << hr << std::dec << "\n";
+            std::cerr << "[WindowsMicrophone] No capture device found: 0x" << std::hex << hr << std::dec << "\n";
             return false;
         }
 
@@ -426,6 +442,15 @@ public:
         } else if (key == "mute") {
             mute_ = (value == "true" || value == "1");
             std::cerr << "[WindowsMicrophone] Mute set to " << (mute_ ? "true" : "false") << "\n";
+        } else if (key == "device") {
+            // v2.3: Device selection - can only be set before initialize()
+            if (state_ == PluginState::Unloaded) {
+                deviceId_ = value;
+                std::cerr << "[WindowsMicrophone] Device ID set to: "
+                          << (value.empty() ? "(default)" : value) << "\n";
+            } else {
+                std::cerr << "[WindowsMicrophone] Cannot change device after initialization\n";
+            }
         }
         // sampleRate, channels can only be set before initialize()
     }
@@ -441,6 +466,7 @@ public:
         if (key == "framesCaptured") return std::to_string(framesCaptured_);
         if (key == "underruns") return std::to_string(underruns_);
         if (key == "readCalls") return std::to_string(readCalls_);
+        if (key == "device") return deviceId_;  // v2.3: Device selection
         return "";
     }
 
@@ -667,6 +693,11 @@ private:
 
     /// Threshold for triggering data-ready callback (frames)
     int dataReadyThreshold_;
+
+    // ===== v2.3: Device Selection Support =====
+
+    /// Device ID for specific device selection (empty = use default)
+    std::string deviceId_;
 
     // ===== End Ring Buffer / Event-Driven Integration =====
 

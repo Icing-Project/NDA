@@ -1,5 +1,8 @@
 #include "ui/PluginSidebar.h"
 #include "audio/WasapiDeviceEnum.h"
+#ifdef __linux__
+#include "audio/PulseDeviceEnum.h"
+#endif
 #include <QCoreApplication>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -177,8 +180,10 @@ void PluginSidebar::showPluginConfig(std::shared_ptr<BasePlugin> plugin)
             addFileSelector("Output File:", "output_path");
         }
 
-        // v2.2: AIOC Sink specific UI
-        if (info.name.find("AIOC") != std::string::npos && info.type == PluginType::AudioSink) {
+        // v2.2: AIOC Sink specific UI (Windows)
+        if (info.name.find("AIOC") != std::string::npos &&
+            info.name.find("Linux") == std::string::npos &&
+            info.type == PluginType::AudioSink) {
             addAIOCDeviceSelector("AIOC Output Device:", "device_id", 1);  // 1 = eRender (speakers)
             addPTTModeSelector("PTT Mode:", "ptt_mode");
             addSlider("VPTT Threshold:", "vptt_threshold", 0, 32768, 64);
@@ -186,11 +191,45 @@ void PluginSidebar::showPluginConfig(std::shared_ptr<BasePlugin> plugin)
             addTextInput("CDC Port (auto-detect):", "cdc_port");
         }
 
-        // v2.2: AIOC Source specific UI
-        if (info.name.find("AIOC") != std::string::npos && info.type == PluginType::AudioSource) {
+        // v2.2: AIOC Source specific UI (Windows)
+        if (info.name.find("AIOC") != std::string::npos &&
+            info.name.find("Linux") == std::string::npos &&
+            info.type == PluginType::AudioSource) {
             addAIOCDeviceSelector("AIOC Input Device:", "device_id", 0);  // 0 = eCapture (microphones)
             addSlider("VCOS Threshold:", "vcos_threshold", 0, 32768, 32);
             addSlider("VCOS Hang (ms):", "vcos_hang_ms", 0, 2000, 200);
+        }
+
+        // v2.4: Linux AIOC Sink specific UI
+        if (info.name.find("Linux AIOC") != std::string::npos && info.type == PluginType::AudioSink) {
+            addPulseDeviceSelector("AIOC Output Device:", "device", false);  // false = sink
+            addLinuxPTTModeSelector("PTT Mode:", "ptt_mode");
+            addTextInput("CDC Port:", "cdc_port");
+        }
+
+        // v2.4: Linux AIOC Source specific UI
+        if (info.name.find("Linux AIOC") != std::string::npos && info.type == PluginType::AudioSource) {
+            addPulseDeviceSelector("AIOC Input Device:", "device", true);  // true = source
+        }
+
+        // v2.3: PulseAudio Source plugin (Linux microphone)
+        if (info.name.find("PulseAudio") != std::string::npos && info.type == PluginType::AudioSource) {
+            addPulseDeviceSelector("Input Device:", "device", true);  // true = source (microphone)
+        }
+
+        // v2.3: PulseAudio Sink plugin (Linux speaker)
+        if (info.name.find("PulseAudio") != std::string::npos && info.type == PluginType::AudioSink) {
+            addPulseDeviceSelector("Output Device:", "device", false);  // false = sink (speaker)
+        }
+
+        // v2.3: Windows Microphone plugin (WASAPI capture)
+        if (info.name.find("Windows Microphone") != std::string::npos && info.type == PluginType::AudioSource) {
+            addWASAPIDeviceSelector("Input Device:", "device", 0);  // 0 = eCapture (microphones)
+        }
+
+        // v2.3: Windows Speaker plugin (WASAPI render)
+        if (info.name.find("Windows Speaker") != std::string::npos && info.type == PluginType::AudioSink) {
+            addWASAPIDeviceSelector("Output Device:", "device", 1);  // 1 = eRender (speakers)
         }
 
         contentLayout->addStretch();
@@ -380,6 +419,124 @@ void PluginSidebar::addPTTModeSelector(const QString& label, const QString& key)
     combo->addItem("VPTT Auto (Voice Activated)", "vptt_auto");
 
     // Default to HID Manual (index 0)
+    combo->setCurrentIndex(0);
+
+    contentLayout->addWidget(combo);
+    parameterWidgets_[key.toStdString()] = combo;
+}
+
+// v2.4: Linux AIOC PTT mode selector (HID/CDC/Auto)
+void PluginSidebar::addLinuxPTTModeSelector(const QString& label, const QString& key)
+{
+    QVBoxLayout *contentLayout = qobject_cast<QVBoxLayout*>(contentWidget_->layout());
+    if (!contentLayout) return;
+
+    QLabel *labelWidget = new QLabel(label, this);
+    labelWidget->setObjectName("paramLabel");
+    contentLayout->addWidget(labelWidget);
+
+    QComboBox *combo = new QComboBox(this);
+    combo->setObjectName("paramCombo");
+    combo->setMinimumHeight(35);
+
+    // PTT mode options for Linux (HID/CDC/Auto, no VPTT)
+    combo->addItem("Auto (HID then CDC)", "auto");
+    combo->addItem("HID Only", "hid");
+    combo->addItem("CDC/Serial Only", "cdc");
+
+    // Default to Auto (index 0)
+    combo->setCurrentIndex(0);
+
+    contentLayout->addWidget(combo);
+    parameterWidgets_[key.toStdString()] = combo;
+}
+
+// v2.3: PulseAudio device selector for Linux
+void PluginSidebar::addPulseDeviceSelector(const QString& label, const QString& key, bool isSource)
+{
+#ifdef __linux__
+    QVBoxLayout *contentLayout = qobject_cast<QVBoxLayout*>(contentWidget_->layout());
+    if (!contentLayout) return;
+
+    QLabel *labelWidget = new QLabel(label, this);
+    labelWidget->setObjectName("paramLabel");
+    contentLayout->addWidget(labelWidget);
+
+    QComboBox *combo = new QComboBox(this);
+    combo->setObjectName("paramCombo");
+    combo->setMinimumHeight(35);
+
+    // Add default device option first
+    combo->addItem("Default Device", "");
+
+    // Enumerate PulseAudio devices
+    if (isSource) {
+        auto devices = enumeratePulseSources();
+        for (const auto& dev : devices) {
+            QString displayName = QString::fromStdString(dev.description);
+            if (dev.isDefault) {
+                displayName += " (Default)";
+            }
+            combo->addItem(displayName, QString::fromStdString(dev.name));
+        }
+    } else {
+        auto devices = enumeratePulseSinks();
+        for (const auto& dev : devices) {
+            QString displayName = QString::fromStdString(dev.description);
+            if (dev.isDefault) {
+                displayName += " (Default)";
+            }
+            combo->addItem(displayName, QString::fromStdString(dev.name));
+        }
+    }
+
+    // Select "Default Device" by default (index 0)
+    combo->setCurrentIndex(0);
+
+    contentLayout->addWidget(combo);
+    parameterWidgets_[key.toStdString()] = combo;
+#else
+    // On non-Linux platforms, just add a placeholder
+    (void)label;
+    (void)key;
+    (void)isSource;
+    QVBoxLayout *contentLayout = qobject_cast<QVBoxLayout*>(contentWidget_->layout());
+    if (!contentLayout) return;
+
+    QLabel *infoLabel = new QLabel("PulseAudio is only available on Linux", this);
+    infoLabel->setObjectName("paramLabel");
+    infoLabel->setStyleSheet("color: #f59e0b;");  // Warning color
+    contentLayout->addWidget(infoLabel);
+#endif
+}
+
+// v2.3: WASAPI device selector for Windows Microphone/Speaker plugins
+void PluginSidebar::addWASAPIDeviceSelector(const QString& label, const QString& key, int direction)
+{
+    QVBoxLayout *contentLayout = qobject_cast<QVBoxLayout*>(contentWidget_->layout());
+    if (!contentLayout) return;
+
+    QLabel *labelWidget = new QLabel(label, this);
+    labelWidget->setObjectName("paramLabel");
+    contentLayout->addWidget(labelWidget);
+
+    QComboBox *combo = new QComboBox(this);
+    combo->setObjectName("paramCombo");
+    combo->setMinimumHeight(35);
+
+    // Add default device option first
+    combo->addItem("Default Device", "");
+
+    // Enumerate WASAPI devices
+    // direction: 0 = eCapture (microphones), 1 = eRender (speakers)
+    auto devices = enumerateWASAPIDevices(direction);
+
+    for (const auto& dev : devices) {
+        combo->addItem(QString::fromStdString(dev.friendlyName),
+                       QString::fromStdString(dev.id));
+    }
+
+    // Select "Default Device" by default (index 0)
     combo->setCurrentIndex(0);
 
     contentLayout->addWidget(combo);
