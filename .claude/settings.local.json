@@ -36,6 +36,13 @@
       "Bash(flatpak-spawn --host cat:*)",
       "Bash(cat:*)",
       "Bash(ldd:*)"
+      "Bash(cmake --build:*)",
+      "Bash(test:*)",
+      "Bash(\"/mnt/c/Users/Steph/AppData/Local/Programs/Python/Python310/python.exe\" -m pip list)",
+      "Bash(\"/mnt/c/Users/Steph/AppData/Local/Programs/Python/Python310/python.exe\" -c \"import site; print\\(site.getsitepackages\\(\\)[0]\\)\")",
+      "Bash(\"/mnt/c/Users/Steph/AppData/Local/Programs/Python/Python310/python.exe\" -c \"import site; import sys; print\\(''site-packages:'', site.getsitepackages\\(\\)\\); print\\(''sys.path:'', sys.path[:5]\\)\")",
+      "Bash(\"/mnt/c/Users/Steph/AppData/Local/Programs/Python/Python310/python.exe\" -c \"import site; paths = site.getsitepackages\\(\\); print\\(''All paths:''\\); [print\\(f''  [{i}] {p}''\\) for i,p in enumerate\\(paths\\)]; correct = [p for p in paths if p.endswith\\(''site-packages''\\)]; print\\(''\\\\nCorrect path:'', correct[0] if correct else ''NOT FOUND''\\)\")",
+      "Bash(cmd.exe /c build_release_package.bat)"
     ]
   }
 }

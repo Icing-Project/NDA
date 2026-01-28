@@ -1,0 +1,11 @@
+{
+  "_comment": "NDA Build Configuration - Copy this to build_config.json and update paths",
+  "qt_path": "C:/Qt/6.6.3/msvc2019_64",
+  "openssl_path": "C:/Program Files/OpenSSL-Win64",
+  "python_path": "C:/Python312",
+  "visual_studio_path": "C:/Program Files/Microsoft Visual Studio/2022/Community",
+  "build_config": "Release",
+  "enable_python": true,
+  "package_version": "2.0.0",
+  "package_name": "NDA-Windows-Portable"
+}
