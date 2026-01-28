@@ -1,6 +1,29 @@
 # Installation & Build Guide
 
-Build NDA from source for your platform.
+Build NDA from source for your platform, or use the pre-built standalone package.
+
+---
+
+## 🚀 Quick Start: Standalone Portable Package (Windows Only)
+
+**For end users who just want to run NDA without building from source.**
+
+### Download and Run
+
+1. **Download** the standalone package: `NDA-Windows-Portable-v2.0.0.zip`
+2. **Extract** the ZIP to any location (e.g., Desktop, USB drive, etc.)
+3. **Launch** by double-clicking `NDA.bat`
+
+That's it! No installation, no dependencies to install, everything is included.
+
+**Package includes:**
+- ✅ NDA.exe with all plugins (C++ and Python)
+- ✅ Qt6 framework
+- ✅ OpenSSL libraries
+- ✅ Python runtime (if enabled)
+- ✅ All required DLLs and dependencies
+
+**For developers:** See [Standalone Windows Package Guide](standalone-windows.md) for how to build this package yourself.
 
 ---
 
@@ -152,15 +175,38 @@ make -j$(nproc)
 
 ## Deployment (Packaging)
 
-### Windows
-```bash
-# Creates standalone package with all dependencies
+### Windows Standalone Package (Recommended)
+
+**Single-click automated build** that creates a complete portable ZIP package:
+
+```batch
+# One-time setup (detects Qt, Python, OpenSSL paths)
+scripts\windows-packaging\setup_build_config.bat
+
+# Build complete standalone package
+scripts\windows-packaging\build_release_package.bat
+
+# Output: NDA-Windows-Portable-v2.0.0.zip
+```
+
+This creates a production-ready package with:
+- NDA.exe and all plugins
+- All dependencies bundled (Qt, OpenSSL, VCRUNTIME, Python)
+- Automatic verification
+- Ready-to-distribute ZIP archive
+
+**See the complete guide:** [Standalone Windows Package Guide](standalone-windows.md)
+
+### Windows (Legacy Deployment)
+
+```batch
+# Creates basic package (manual DLL copying required)
 python scripts\deploy.py
 
 # Or use batch script
 scripts\deploy_windows.bat
 
-# Output: packages/NDA-v2.0-win64/
+# Output: readytoship/
 ```
 
 ### Linux

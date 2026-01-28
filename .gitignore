@@ -73,3 +73,6 @@ Release/
 
 # Logs
 *.log
+/package/
+*.zip
+**/.backup*
