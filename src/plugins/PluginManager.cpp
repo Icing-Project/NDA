@@ -376,7 +376,9 @@ bool PluginManager::validatePlugin(BasePlugin* plugin)
 void* PluginManager::loadLibrary(const std::string& path)
 {
 #ifdef _WIN32
-    return LoadLibraryA(path.c_str());
+    // Ensure plugin-local dependencies are discoverable on Windows.
+    // Example: PipeBridge*Plugin.dll depends on PipeBridgeSession.dll living in the same plugins folder.
+    return LoadLibraryExA(path.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
 #else
     return dlopen(path.c_str(), RTLD_LAZY);
 #endif
