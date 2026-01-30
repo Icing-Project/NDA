@@ -65,7 +65,7 @@ jobs:
             -DCMAKE_TOOLCHAIN_FILE="${GITHUB_WORKSPACE}/cmake/mingw-w64-toolchain.cmake" \
             -DCMAKE_BUILD_TYPE=Release
           make -j$(nproc)
-          ls -la NADE.exe
+          ls -la NDA.exe
 
       - name: Deploy Windows package
         run: |
@@ -74,7 +74,7 @@ jobs:
           mkdir -p "$DEPLOY_DIR"/{bin,plugins,docs,python}
 
           # Copy executable
-          cp build-mingw/NADE.exe "$DEPLOY_DIR/bin/"
+          cp build-mingw/NDA.exe "$DEPLOY_DIR/bin/"
 
           # Copy Qt6 DLLs
           for dll in Qt6Core.dll Qt6Gui.dll Qt6Widgets.dll \
@@ -170,7 +170,7 @@ jobs:
             'set PYTHONPATH=%CD%\plugins;%PYTHONPATH%' \
             '' \
             'REM Run NADE' \
-            'bin\NADE.exe' \
+            'bin\NDA.exe' \
             > "$DEPLOY_DIR/NADE.bat"
 
           echo "Package created at: $DEPLOY_DIR"
@@ -242,7 +242,7 @@ jobs:
             ## NADE ${{ needs.build-windows.outputs.version }} - Windows Release
 
             ### What's included
-            - NADE.exe with all required DLLs (Qt6, OpenSSL, VC++ runtime)
+            - NDA.exe with all required DLLs (Qt6, OpenSSL, VC++ runtime)
             - Embedded Python 3.11 (no system Python required)
             - Python plugins for audio I/O
             - Nade Python package from [Nade-Python](https://github.com/Icing-Project/Nade-Python)
