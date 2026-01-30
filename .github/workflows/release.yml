@@ -1,0 +1,262 @@
+name: Windows Release
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - 'v*'
+
+env:
+  MINGW_ROOT: /usr/x86_64-w64-mingw32/sys-root/mingw
+
+jobs:
+  build-windows:
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:41
+
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - name: Install git and dependencies
+        run: |
+          dnf install -y git findutils zip wget unzip
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install MinGW cross-compilation tools
+        run: |
+          dnf install -y \
+            mingw64-gcc-c++ \
+            mingw64-qt6-qtbase \
+            mingw64-qt6-qttools \
+            mingw64-openssl \
+            mingw64-python3 \
+            mingw64-filesystem \
+            cmake \
+            make
+
+      - name: Determine version
+        id: version
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            VERSION="${{ github.ref_name }}"
+          else
+            # Auto-increment based on commit count
+            COMMIT_COUNT=$(git rev-list --count HEAD)
+            SHORT_SHA=$(git rev-parse --short HEAD)
+            VERSION="v2.0.${COMMIT_COUNT}-${SHORT_SHA}"
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Version: ${VERSION}"
+
+      - name: Build Windows executable
+        run: |
+          mkdir -p build-mingw
+          cd build-mingw
+          cmake .. \
+            -DCMAKE_TOOLCHAIN_FILE=../cmake/mingw-w64-toolchain.cmake \
+            -DCMAKE_BUILD_TYPE=Release
+          make -j$(nproc)
+          ls -la NADE.exe
+
+      - name: Deploy Windows package
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          DEPLOY_DIR="packages/windows"
+          mkdir -p "$DEPLOY_DIR"/{bin,plugins,docs,python}
+
+          # Copy executable
+          cp build-mingw/NADE.exe "$DEPLOY_DIR/bin/"
+
+          # Copy Qt6 DLLs
+          for dll in Qt6Core.dll Qt6Gui.dll Qt6Widgets.dll \
+                     libgcc_s_seh-1.dll libstdc++-6.dll libwinpthread-1.dll; do
+            [ -f "$MINGW_ROOT/bin/$dll" ] && cp "$MINGW_ROOT/bin/$dll" "$DEPLOY_DIR/bin/"
+          done
+
+          # Qt6 platform plugins
+          mkdir -p "$DEPLOY_DIR/bin/platforms"
+          [ -f "$MINGW_ROOT/lib/qt6/plugins/platforms/qwindows.dll" ] && \
+            cp "$MINGW_ROOT/lib/qt6/plugins/platforms/qwindows.dll" "$DEPLOY_DIR/bin/platforms/"
+
+          # Qt6 styles
+          mkdir -p "$DEPLOY_DIR/bin/styles"
+          [ -d "$MINGW_ROOT/lib/qt6/plugins/styles" ] && \
+            cp "$MINGW_ROOT/lib/qt6/plugins/styles/"*.dll "$DEPLOY_DIR/bin/styles/" 2>/dev/null || true
+
+          # OpenSSL DLLs
+          for dll in libcrypto-3-x64.dll libssl-3-x64.dll; do
+            [ -f "$MINGW_ROOT/bin/$dll" ] && cp "$MINGW_ROOT/bin/$dll" "$DEPLOY_DIR/bin/"
+          done
+
+          # Additional runtime DLLs
+          for dll in zlib1.dll libbz2-1.dll libpcre2-16-0.dll libpcre2-8-0.dll \
+                     libiconv-2.dll iconv.dll libintl-8.dll libharfbuzz-0.dll \
+                     libfreetype-6.dll libpng16-16.dll libjpeg-62.dll \
+                     libglib-2.0-0.dll libdouble-conversion-3.dll libfontconfig-1.dll \
+                     libexpat-1.dll libgraphite2.dll libbrotlidec.dll libbrotlicommon.dll \
+                     libffi-8.dll libpcre-1.dll libgobject-2.0-0.dll libgmodule-2.0-0.dll \
+                     libgio-2.0-0.dll libgthread-2.0-0.dll libfribidi-0.dll \
+                     libpixman-1-0.dll libcairo-2.dll libxml2-2.dll liblzma-5.dll \
+                     liblz4.dll libzstd.dll icuuc74.dll icui18n74.dll icudata74.dll; do
+            [ -f "$MINGW_ROOT/bin/$dll" ] && cp "$MINGW_ROOT/bin/$dll" "$DEPLOY_DIR/bin/"
+          done
+
+          # Download embedded Python
+          PYTHON_VERSION="3.11.9"
+          wget -q "https://www.python.org/ftp/python/${PYTHON_VERSION}/python-${PYTHON_VERSION}-embed-amd64.zip" -O /tmp/python-embedded.zip
+          unzip -q /tmp/python-embedded.zip -d "$DEPLOY_DIR/python/"
+          rm /tmp/python-embedded.zip
+
+          # Configure embedded Python (enable site-packages)
+          PTH_FILE=$(find "$DEPLOY_DIR/python/" -name "python*._pth" | head -1)
+          if [ -f "$PTH_FILE" ]; then
+            sed -i 's/^#import site/import site/' "$PTH_FILE"
+            echo "../plugins" >> "$PTH_FILE"
+          fi
+
+          # Download get-pip.py
+          wget -q https://bootstrap.pypa.io/get-pip.py -O "$DEPLOY_DIR/python/get-pip.py"
+
+          # Copy Python plugins
+          cp plugins_py/*.py "$DEPLOY_DIR/plugins/" 2>/dev/null || true
+
+          # Copy C++ plugin DLLs if any were built
+          cp build-mingw/plugins/*.dll "$DEPLOY_DIR/plugins/" 2>/dev/null || true
+
+          # Copy documentation
+          cp README.md "$DEPLOY_DIR/" 2>/dev/null || true
+          cp requirements.txt "$DEPLOY_DIR/" 2>/dev/null || true
+          cp docs/*.md "$DEPLOY_DIR/docs/" 2>/dev/null || true
+
+          # Create launcher batch file
+          cat > "$DEPLOY_DIR/NADE.bat" << 'EOF'
+@echo off
+REM NADE Windows Launcher (Embedded Python)
+cd /d "%~dp0"
+
+REM Check if pip is installed
+if not exist "python\Scripts\pip.exe" (
+    echo First-time setup: Installing pip...
+    python\python.exe python\get-pip.py --no-warn-script-location
+    echo.
+)
+
+REM Check Python dependencies
+python\python.exe -c "import sounddevice" 2>nul
+if %ERRORLEVEL% NEQ 0 (
+    echo Installing Python dependencies...
+    python\Scripts\pip.exe install --no-warn-script-location -r requirements.txt
+    echo.
+)
+
+REM Check for nade package
+python\python.exe -c "import nade" 2>nul
+if %ERRORLEVEL% NEQ 0 (
+    echo Installing nade package...
+    python\Scripts\pip.exe install --no-warn-script-location nade
+    echo.
+)
+
+REM Set Python path to include plugins
+set PYTHONPATH=%CD%\plugins;%PYTHONPATH%
+
+REM Run NADE
+bin\NADE.exe
+EOF
+
+          echo "Package created at: $DEPLOY_DIR"
+
+      - name: Clone and include Nade-Python
+        run: |
+          DEPLOY_DIR="packages/windows"
+
+          # Clone Nade-Python repository
+          git clone --depth 1 https://github.com/Icing-Project/Nade-Python.git /tmp/nade-python
+
+          # Copy the nade package into the deployment
+          if [ -d "/tmp/nade-python/nade" ]; then
+            mkdir -p "$DEPLOY_DIR/python/Lib/site-packages"
+            cp -r /tmp/nade-python/nade "$DEPLOY_DIR/python/Lib/site-packages/"
+            echo "Included nade package from Nade-Python repository"
+          fi
+
+          # Also include any adapter if present
+          if [ -d "/tmp/nade-python/adapter" ]; then
+            cp -r /tmp/nade-python/adapter "$DEPLOY_DIR/python/Lib/site-packages/"
+            echo "Included adapter package"
+          fi
+
+          rm -rf /tmp/nade-python
+
+      - name: Create release archive
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          cd packages
+
+          # Rename directory to include version
+          mv windows "NADE-${VERSION}-Windows-x64"
+
+          # Create zip archive
+          zip -r "NADE-${VERSION}-Windows-x64.zip" "NADE-${VERSION}-Windows-x64/"
+
+          # Show archive info
+          ls -lh "NADE-${VERSION}-Windows-x64.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release
+          path: packages/NADE-*-Windows-x64.zip
+          retention-days: 30
+
+  release:
+    needs: build-windows
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-release
+          path: ./release
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.build-windows.outputs.version }}
+          name: NADE ${{ needs.build-windows.outputs.version }}
+          body: |
+            ## NADE ${{ needs.build-windows.outputs.version }} - Windows Release
+
+            ### What's included
+            - NADE.exe with all required DLLs (Qt6, OpenSSL, VC++ runtime)
+            - Embedded Python 3.11 (no system Python required)
+            - Python plugins for audio I/O
+            - Nade Python package from [Nade-Python](https://github.com/Icing-Project/Nade-Python)
+            - Complete documentation
+
+            ### Installation
+            1. Download and extract the ZIP file
+            2. Double-click `NADE.bat`
+            3. First run will install pip and dependencies (requires internet)
+            4. Done! Future runs start instantly
+
+            ### Requirements
+            - Windows 10/11 x64
+            - Internet connection (first run only)
+
+            No Python, Qt, OpenSSL, or Visual Studio installation required!
+          files: release/NADE-*-Windows-x64.zip
+          draft: false
+          prerelease: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+          generate_release_notes: true
