@@ -438,7 +438,8 @@ endif()
 # Platform-specific settings
 if(WIN32)
     # Windows audio APIs
-    target_link_libraries(${PROJECT_NAME} winmm dsound ole32)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE INITGUID)
+    target_link_libraries(${PROJECT_NAME} winmm dsound ole32 propsys)
     # Enable console for debugging
     set_target_properties(${PROJECT_NAME} PROPERTIES WIN32_EXECUTABLE OFF)
 endif()
