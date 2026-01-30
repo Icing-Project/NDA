@@ -1,5 +1,8 @@
 # Update Log
 
+## 2026-01-30: Fix YAML syntax in CI workflow
+Fixed heredoc syntax that broke YAML parsing - replaced with printf command.
+
 ## 2026-01-30: GitHub Actions CI for Windows Releases
 
 ### What was done
