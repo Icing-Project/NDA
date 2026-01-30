@@ -76,28 +76,65 @@ jobs:
           # Copy executable
           cp build-mingw/NDA.exe "$DEPLOY_DIR/bin/"
 
-          # Copy Qt6 DLLs
-          for dll in Qt6Core.dll Qt6Gui.dll Qt6Widgets.dll \
+          # Debug: show what's in MINGW_ROOT
+          echo "=== Contents of MINGW_ROOT/bin ==="
+          ls "$MINGW_ROOT/bin/" | head -50
+          echo "=== Qt6 DLLs in MINGW_ROOT ==="
+          find "$MINGW_ROOT" -name "Qt6*.dll" 2>/dev/null || true
+          find "$MINGW_ROOT" -name "libwinpthread*.dll" 2>/dev/null || true
+
+          # Copy all DLLs from MinGW bin that we need
+          copy_dll() {
+            local dll="$1"
+            if [ -f "$MINGW_ROOT/bin/$dll" ]; then
+              cp "$MINGW_ROOT/bin/$dll" "$DEPLOY_DIR/bin/"
+              echo "  ✓ $dll"
+            else
+              # Try to find it elsewhere
+              found=$(find "$MINGW_ROOT" -name "$dll" 2>/dev/null | head -1)
+              if [ -n "$found" ]; then
+                cp "$found" "$DEPLOY_DIR/bin/"
+                echo "  ✓ $dll (from $found)"
+              else
+                echo "  ✗ $dll NOT FOUND"
+              fi
+            fi
+          }
+
+          echo "=== Copying Qt6 and runtime DLLs ==="
+          for dll in Qt6Core.dll Qt6Gui.dll Qt6Widgets.dll Qt6Network.dll \
                      libgcc_s_seh-1.dll libstdc++-6.dll libwinpthread-1.dll; do
-            [ -f "$MINGW_ROOT/bin/$dll" ] && cp "$MINGW_ROOT/bin/$dll" "$DEPLOY_DIR/bin/"
+            copy_dll "$dll"
           done
 
           # Qt6 platform plugins
+          echo "=== Copying Qt6 platform plugins ==="
           mkdir -p "$DEPLOY_DIR/bin/platforms"
-          [ -f "$MINGW_ROOT/lib/qt6/plugins/platforms/qwindows.dll" ] && \
+          if [ -f "$MINGW_ROOT/lib/qt6/plugins/platforms/qwindows.dll" ]; then
             cp "$MINGW_ROOT/lib/qt6/plugins/platforms/qwindows.dll" "$DEPLOY_DIR/bin/platforms/"
+            echo "  ✓ qwindows.dll"
+          else
+            found=$(find "$MINGW_ROOT" -name "qwindows.dll" 2>/dev/null | head -1)
+            if [ -n "$found" ]; then
+              cp "$found" "$DEPLOY_DIR/bin/platforms/"
+              echo "  ✓ qwindows.dll (from $found)"
+            else
+              echo "  ✗ qwindows.dll NOT FOUND"
+            fi
+          fi
 
           # Qt6 styles
           mkdir -p "$DEPLOY_DIR/bin/styles"
-          [ -d "$MINGW_ROOT/lib/qt6/plugins/styles" ] && \
-            cp "$MINGW_ROOT/lib/qt6/plugins/styles/"*.dll "$DEPLOY_DIR/bin/styles/" 2>/dev/null || true
+          find "$MINGW_ROOT" -path "*/styles/*.dll" -exec cp {} "$DEPLOY_DIR/bin/styles/" \; 2>/dev/null || true
 
           # OpenSSL DLLs
-          for dll in libcrypto-3-x64.dll libssl-3-x64.dll; do
-            [ -f "$MINGW_ROOT/bin/$dll" ] && cp "$MINGW_ROOT/bin/$dll" "$DEPLOY_DIR/bin/"
+          echo "=== Copying OpenSSL DLLs ==="
+          for dll in libcrypto-3-x64.dll libssl-3-x64.dll libcrypto-3.dll libssl-3.dll; do
+            copy_dll "$dll"
           done
 
           # Additional runtime DLLs
+          echo "=== Copying additional runtime DLLs ==="
           for dll in zlib1.dll libbz2-1.dll libpcre2-16-0.dll libpcre2-8-0.dll \
                      libiconv-2.dll iconv.dll libintl-8.dll libharfbuzz-0.dll \
                      libfreetype-6.dll libpng16-16.dll libjpeg-62.dll \
@@ -106,9 +143,14 @@ jobs:
                      libffi-8.dll libpcre-1.dll libgobject-2.0-0.dll libgmodule-2.0-0.dll \
                      libgio-2.0-0.dll libgthread-2.0-0.dll libfribidi-0.dll \
                      libpixman-1-0.dll libcairo-2.dll libxml2-2.dll liblzma-5.dll \
-                     liblz4.dll libzstd.dll icuuc74.dll icui18n74.dll icudata74.dll; do
-            [ -f "$MINGW_ROOT/bin/$dll" ] && cp "$MINGW_ROOT/bin/$dll" "$DEPLOY_DIR/bin/"
+                     liblz4.dll libzstd.dll icuuc74.dll icui18n74.dll icudata74.dll \
+                     icuuc*.dll icui18n*.dll icudata*.dll; do
+            copy_dll "$dll"
           done
+
+          echo "=== DLLs copied to package ==="
+          ls -la "$DEPLOY_DIR/bin/"*.dll | wc -l
+          echo "Total DLLs copied"
 
           # Download embedded Python
           PYTHON_VERSION="3.11.9"
