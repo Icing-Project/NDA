@@ -309,27 +309,31 @@ if(WIN32)
         plugins_src/AIOCPluginCommon.cpp
         plugins_src/AIOCSourcePlugin.cpp
     )
-    target_link_libraries(AIOCSourcePlugin ole32 avrt setupapi hid)
+    target_compile_definitions(AIOCSourcePlugin PRIVATE INITGUID)
+    target_link_libraries(AIOCSourcePlugin ole32 avrt setupapi hid propsys)
     list(APPEND NDA_PLUGIN_TARGETS AIOCSourcePlugin)
 
     add_nda_plugin(AIOCSinkPlugin
         plugins_src/AIOCPluginCommon.cpp
         plugins_src/AIOCSinkPlugin.cpp
     )
-    target_link_libraries(AIOCSinkPlugin ole32 avrt setupapi hid)
+    target_compile_definitions(AIOCSinkPlugin PRIVATE INITGUID)
+    target_link_libraries(AIOCSinkPlugin ole32 avrt setupapi hid propsys)
     list(APPEND NDA_PLUGIN_TARGETS AIOCSinkPlugin)
 
     # Windows speaker/microphone plugins (WASAPI)
     add_nda_plugin(WindowsSpeakerSinkPlugin
         plugins_src/WindowsSpeakerSinkPlugin.cpp
     )
-    target_link_libraries(WindowsSpeakerSinkPlugin ole32)
+    target_compile_definitions(WindowsSpeakerSinkPlugin PRIVATE INITGUID)
+    target_link_libraries(WindowsSpeakerSinkPlugin ole32 ksuser)
     list(APPEND NDA_PLUGIN_TARGETS WindowsSpeakerSinkPlugin)
 
     add_nda_plugin(WindowsMicrophoneSourcePlugin
         plugins_src/WindowsMicrophoneSourcePlugin.cpp
     )
-    target_link_libraries(WindowsMicrophoneSourcePlugin ole32)
+    target_compile_definitions(WindowsMicrophoneSourcePlugin PRIVATE INITGUID)
+    target_link_libraries(WindowsMicrophoneSourcePlugin ole32 ksuser)
     list(APPEND NDA_PLUGIN_TARGETS WindowsMicrophoneSourcePlugin)
 endif()
 
