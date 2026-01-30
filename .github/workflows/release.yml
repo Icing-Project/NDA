@@ -135,40 +135,40 @@ jobs:
           cp docs/*.md "$DEPLOY_DIR/docs/" 2>/dev/null || true
 
           # Create launcher batch file
-          cat > "$DEPLOY_DIR/NADE.bat" << 'EOF'
-@echo off
-REM NADE Windows Launcher (Embedded Python)
-cd /d "%~dp0"
-
-REM Check if pip is installed
-if not exist "python\Scripts\pip.exe" (
-    echo First-time setup: Installing pip...
-    python\python.exe python\get-pip.py --no-warn-script-location
-    echo.
-)
-
-REM Check Python dependencies
-python\python.exe -c "import sounddevice" 2>nul
-if %ERRORLEVEL% NEQ 0 (
-    echo Installing Python dependencies...
-    python\Scripts\pip.exe install --no-warn-script-location -r requirements.txt
-    echo.
-)
-
-REM Check for nade package
-python\python.exe -c "import nade" 2>nul
-if %ERRORLEVEL% NEQ 0 (
-    echo Installing nade package...
-    python\Scripts\pip.exe install --no-warn-script-location nade
-    echo.
-)
-
-REM Set Python path to include plugins
-set PYTHONPATH=%CD%\plugins;%PYTHONPATH%
-
-REM Run NADE
-bin\NADE.exe
-EOF
+          printf '%s\r\n' \
+            '@echo off' \
+            'REM NADE Windows Launcher (Embedded Python)' \
+            'cd /d "%~dp0"' \
+            '' \
+            'REM Check if pip is installed' \
+            'if not exist "python\Scripts\pip.exe" (' \
+            '    echo First-time setup: Installing pip...' \
+            '    python\python.exe python\get-pip.py --no-warn-script-location' \
+            '    echo.' \
+            ')' \
+            '' \
+            'REM Check Python dependencies' \
+            'python\python.exe -c "import sounddevice" 2>nul' \
+            'if %ERRORLEVEL% NEQ 0 (' \
+            '    echo Installing Python dependencies...' \
+            '    python\Scripts\pip.exe install --no-warn-script-location -r requirements.txt' \
+            '    echo.' \
+            ')' \
+            '' \
+            'REM Check for nade package' \
+            'python\python.exe -c "import nade" 2>nul' \
+            'if %ERRORLEVEL% NEQ 0 (' \
+            '    echo Installing nade package...' \
+            '    python\Scripts\pip.exe install --no-warn-script-location nade' \
+            '    echo.' \
+            ')' \
+            '' \
+            'REM Set Python path to include plugins' \
+            'set PYTHONPATH=%CD%\plugins;%PYTHONPATH%' \
+            '' \
+            'REM Run NADE' \
+            'bin\NADE.exe' \
+            > "$DEPLOY_DIR/NADE.bat"
 
           echo "Package created at: $DEPLOY_DIR"
 
