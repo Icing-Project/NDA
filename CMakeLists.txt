@@ -82,6 +82,42 @@ find_package(Qt6 REQUIRED COMPONENTS Core Widgets Gui Network)
 # OpenSSL for encryption (now plugin-only, not core dependency in v2.0)
 find_package(OpenSSL REQUIRED)
 
+# ===================================================================
+# libnade_crypto - Shared Crypto Library
+# ===================================================================
+add_library(nade_crypto SHARED
+    include/crypto/CryptoManager.h
+    src/crypto/CryptoManager.cpp
+)
+
+target_include_directories(nade_crypto
+    PUBLIC ${CMAKE_SOURCE_DIR}/include
+)
+
+target_link_libraries(nade_crypto
+    PUBLIC
+        OpenSSL::SSL
+        OpenSSL::Crypto
+        Qt6::Core
+)
+
+target_compile_definitions(nade_crypto
+    PRIVATE NADE_CRYPTO_EXPORTS
+)
+
+set_target_properties(nade_crypto PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+    POSITION_INDEPENDENT_CODE ON
+)
+
+# Install shared library
+install(TARGETS nade_crypto
+    RUNTIME DESTINATION bin
+    LIBRARY DESTINATION lib
+    ARCHIVE DESTINATION lib
+)
+
 # Optional: libsamplerate for high-quality resampling (primarily via pkg-config on Unix).
 if(NOT WIN32)
     find_package(PkgConfig)
@@ -160,6 +196,30 @@ if(NDA_ENABLE_PYTHON)
         endif()
 
         add_compile_definitions(NDA_ENABLE_PYTHON)
+
+        # Find pybind11 for embedding Python in plugins
+        find_package(pybind11 CONFIG QUIET)
+        if(pybind11_FOUND)
+            message(STATUS "  pybind11 found via CMake config: ${pybind11_VERSION}")
+            set(NDA_PYBIND11_FOUND TRUE)
+        else()
+            # Try to get pybind11 include path from Python package
+            execute_process(
+                COMMAND ${Python3_EXECUTABLE} -c "import pybind11; print(pybind11.get_include())"
+                OUTPUT_VARIABLE PYBIND11_INCLUDE_DIR
+                OUTPUT_STRIP_TRAILING_WHITESPACE
+                RESULT_VARIABLE PYBIND11_RESULT
+            )
+            if(PYBIND11_RESULT EQUAL 0 AND EXISTS "${PYBIND11_INCLUDE_DIR}")
+                message(STATUS "  pybind11 found via Python package: ${PYBIND11_INCLUDE_DIR}")
+                set(NDA_PYBIND11_FOUND TRUE)
+                set(NDA_PYBIND11_INCLUDE_DIR "${PYBIND11_INCLUDE_DIR}")
+            else()
+                message(STATUS "  pybind11 not found - Nade Python plugins will be disabled")
+                message(STATUS "  Install with: pip install pybind11")
+                set(NDA_PYBIND11_FOUND FALSE)
+            endif()
+        endif()
     else()
         if(Python3_Interpreter_FOUND AND NOT Python3_Development_FOUND)
             message(WARNING "Python interpreter found but Development files not found; point CMake to a full Python install (or its base), not just a venv")
@@ -191,7 +251,6 @@ set(SOURCES
     src/core/ProcessingPipeline.cpp
     src/plugins/PluginManager.cpp
     src/plugins/PluginPaths.cpp
-    src/crypto/CryptoManager.cpp
 )
 
 # Add Python bridge if enabled
@@ -202,6 +261,10 @@ endif()
 # Add Linux audio device enumeration if PulseAudio is available
 if(LINUX_AUDIO_AVAILABLE)
     list(APPEND SOURCES src/audio/PulseDeviceEnum.cpp)
+    list(APPEND HEADERS include/audio/PulseDeviceEnum.h)
+else()
+    # Add stub implementations when PulseAudio is not available
+    list(APPEND SOURCES src/audio/PulseDeviceEnumStub.cpp)
     list(APPEND HEADERS include/audio/PulseDeviceEnum.h)
 endif()
 
@@ -246,12 +309,11 @@ endif()
 
 # Link libraries
 target_link_libraries(${PROJECT_NAME}
+    nade_crypto
     Qt6::Core
     Qt6::Widgets
     Qt6::Gui
     Qt6::Network
-    OpenSSL::SSL
-    OpenSSL::Crypto
 )
 
 # Link libsamplerate if available
@@ -434,6 +496,78 @@ endif()
 
 # Add example processor plugins (AES256 Encryptor/Decryptor)
 # add_subdirectory(plugins_src/examples)
+
+# ============================================================================
+# Nade Text Messaging Plugins (encrypted text over FSK radio)
+# Requires: Qt6, Python3 (with pybind11 for NDA_ENABLE_PYTHON)
+# ============================================================================
+
+# Nade common library (shared between plugins)
+add_library(NadeCommon STATIC
+    plugins_src/nade/NadeExternalIO.cpp
+    plugins_src/nade/NadeExternalIO.h
+    plugins_src/nade/TextEncoding.h
+)
+target_include_directories(NadeCommon PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/plugins_src
+)
+target_link_libraries(NadeCommon
+    nade_crypto
+    Qt6::Widgets
+)
+if(NDA_ENABLE_PYTHON AND Python3_FOUND AND NDA_PYBIND11_FOUND)
+    target_compile_definitions(NadeCommon PRIVATE NDA_ENABLE_PYTHON)
+    target_include_directories(NadeCommon PRIVATE ${Python3_INCLUDE_DIRS})
+    if(pybind11_FOUND)
+        # pybind11 found via CMake config - use target
+        target_link_libraries(NadeCommon pybind11::embed)
+    else()
+        # pybind11 found via Python - include manually
+        target_include_directories(NadeCommon PRIVATE ${NDA_PYBIND11_INCLUDE_DIR})
+        target_link_libraries(NadeCommon Python3::Python)
+    endif()
+endif()
+
+# Nade Text Source Plugin (TX path - text input GUI)
+add_nda_plugin(NadeTextSourcePlugin
+    plugins_src/nade/NadeTextSourcePlugin.cpp
+    plugins_src/nade/NadeTextSourcePlugin.h
+)
+target_include_directories(NadeTextSourcePlugin PRIVATE ${CMAKE_SOURCE_DIR}/plugins_src)
+target_link_libraries(NadeTextSourcePlugin NadeCommon Qt6::Widgets)
+list(APPEND NDA_PLUGIN_TARGETS NadeTextSourcePlugin)
+
+# Nade Encryptor Plugin (TX path - processor)
+add_nda_plugin(NadeEncryptorPlugin
+    plugins_src/nade/NadeEncryptorPlugin.cpp
+    plugins_src/nade/NadeEncryptorPlugin.h
+)
+target_include_directories(NadeEncryptorPlugin PRIVATE ${CMAKE_SOURCE_DIR}/plugins_src)
+target_link_libraries(NadeEncryptorPlugin NadeCommon)
+list(APPEND NDA_PLUGIN_TARGETS NadeEncryptorPlugin)
+
+# Nade Decryptor Plugin (RX path - processor)
+add_nda_plugin(NadeDecryptorPlugin
+    plugins_src/nade/NadeDecryptorPlugin.cpp
+    plugins_src/nade/NadeDecryptorPlugin.h
+)
+target_include_directories(NadeDecryptorPlugin PRIVATE ${CMAKE_SOURCE_DIR}/plugins_src)
+target_link_libraries(NadeDecryptorPlugin NadeCommon)
+list(APPEND NDA_PLUGIN_TARGETS NadeDecryptorPlugin)
+
+# Nade Text Sink Plugin (RX path - text display GUI)
+add_nda_plugin(NadeTextSinkPlugin
+    plugins_src/nade/NadeTextSinkPlugin.cpp
+    plugins_src/nade/NadeTextSinkPlugin.h
+)
+target_include_directories(NadeTextSinkPlugin PRIVATE ${CMAKE_SOURCE_DIR}/plugins_src)
+target_link_libraries(NadeTextSinkPlugin NadeCommon Qt6::Widgets)
+list(APPEND NDA_PLUGIN_TARGETS NadeTextSinkPlugin)
+
+message(STATUS "Nade text messaging plugins enabled: NadeTextSourcePlugin, NadeEncryptorPlugin, NadeDecryptorPlugin, NadeTextSinkPlugin")
+
+# ============================================================================
 
 # Platform-specific settings
 if(WIN32)

@@ -198,6 +198,9 @@ void MainWindow::autoLoadPlugins()
     if (unifiedView_) {
         unifiedView_->refreshPluginLists();
     }
+
+    // Create plugin docks
+    createPluginDocks();
 }
 
 // v2.1: Soak test support methods
@@ -538,5 +541,66 @@ bool MainWindow::applyKeyToSelectedPlugin(const std::string& paramName, const st
             QString::fromStdString(paramName) + "\n\n"
             "This key can still be manually copied and pasted into compatible plugins.");
         return false;
+    }
+}
+
+void MainWindow::createPluginDocks() {
+    auto plugins = pluginManager_->getAllPlugins();
+
+    for (const auto& loadedPlugin : plugins) {
+        if (!loadedPlugin.instance) continue;
+
+        QWidget* gui = loadedPlugin.instance->createDockableGui();
+        if (!gui) continue;
+
+        QString pluginName = QString::fromStdString(loadedPlugin.info.name);
+
+        // Create dock widget
+        QDockWidget* dock = new QDockWidget(pluginName, this);
+        dock->setWidget(gui);
+        dock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+
+        // Add to main window (default: right side)
+        addDockWidget(Qt::RightDockWidgetArea, dock);
+
+        // Store reference
+        pluginDocks_[pluginName] = dock;
+    }
+
+    // Update View menu
+    updatePluginDocksMenu();
+}
+
+void MainWindow::updatePluginDocksMenu() {
+    // Find or create "View" menu
+    QMenu* viewMenu = nullptr;
+    for (QAction* action : menuBar()->actions()) {
+        if (action->text() == tr("&View")) {
+            viewMenu = action->menu();
+            break;
+        }
+    }
+
+    if (!viewMenu) {
+        viewMenu = menuBar()->addMenu(tr("&View"));
+    }
+
+    // Add separator before plugin docks
+    viewMenu->addSeparator();
+
+    // Add toggle actions for each dock
+    for (auto it = pluginDocks_.constBegin(); it != pluginDocks_.constEnd(); ++it) {
+        QAction* toggleAction = viewMenu->addAction(it.key());
+        toggleAction->setCheckable(true);
+        toggleAction->setChecked(it.value()->isVisible());
+
+        connect(toggleAction, &QAction::toggled, this, [this, pluginName = it.key()](bool visible) {
+            if (pluginDocks_.contains(pluginName)) {
+                pluginDocks_[pluginName]->setVisible(visible);
+            }
+        });
+
+        // Sync action state when dock visibility changes
+        connect(it.value(), &QDockWidget::visibilityChanged, toggleAction, &QAction::setChecked);
     }
 }

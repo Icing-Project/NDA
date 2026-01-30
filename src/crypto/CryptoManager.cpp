@@ -227,6 +227,51 @@ std::string CryptoManager::exportX25519PeerPublicKey() const {
     return bytesToHex(rawBytes.data(), rawBytes.size());
 }
 
+std::vector<uint8_t> CryptoManager::exportX25519PrivateKeyBytes() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!x25519PrivateKey_) {
+        return {};
+    }
+
+    std::vector<uint8_t> rawBytes;
+    if (!const_cast<CryptoManager*>(this)->x25519KeyToRawBytes(x25519PrivateKey_, rawBytes, true)) {
+        return {};
+    }
+
+    return rawBytes;
+}
+
+std::vector<uint8_t> CryptoManager::exportX25519PublicKeyBytes() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!x25519PrivateKey_) {
+        return {};
+    }
+
+    std::vector<uint8_t> rawBytes;
+    if (!const_cast<CryptoManager*>(this)->x25519KeyToRawBytes(x25519PrivateKey_, rawBytes, false)) {
+        return {};
+    }
+
+    return rawBytes;
+}
+
+std::vector<uint8_t> CryptoManager::exportX25519PeerPublicKeyBytes() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!x25519PeerPublicKey_) {
+        return {};
+    }
+
+    std::vector<uint8_t> rawBytes;
+    if (!const_cast<CryptoManager*>(this)->x25519KeyToRawBytes(x25519PeerPublicKey_, rawBytes, false)) {
+        return {};
+    }
+
+    return rawBytes;
+}
+
 bool CryptoManager::hasX25519KeyPair() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return x25519PrivateKey_ != nullptr;
