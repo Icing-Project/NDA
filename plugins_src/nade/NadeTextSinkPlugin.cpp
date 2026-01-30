@@ -14,8 +14,16 @@
 #include <QTextEdit>
 #include <QLabel>
 #include <QDateTime>
+#include <iostream>
 
 namespace nade {
+
+// Initialize static GUI widgets and buffers (shared across all instances)
+QWidget* NadeTextSinkPlugin::sharedGuiWidget_ = nullptr;
+QTextEdit* NadeTextSinkPlugin::sharedOutputText_ = nullptr;
+QLabel* NadeTextSinkPlugin::sharedStatusLabel_ = nullptr;
+std::vector<float> NadeTextSinkPlugin::sharedAccumulatedAudio_;
+size_t NadeTextSinkPlugin::sharedMessageCount_ = 0;
 
 NadeTextSinkPlugin::NadeTextSinkPlugin() = default;
 
@@ -50,29 +58,27 @@ bool NadeTextSinkPlugin::initialize() {
 void NadeTextSinkPlugin::shutdown() {
     stop();
 
-    // Clean up GUI
-    if (guiWidget_) {
-        guiWidget_->close();
-        delete guiWidget_;
-        guiWidget_ = nullptr;
-        outputText_ = nullptr;
-        statusLabel_ = nullptr;
-    }
+    // Note: Don't clean up static GUI widgets here - they're shared across all instances
 
     state_ = nda::PluginState::Unloaded;
 }
 
 bool NadeTextSinkPlugin::start() {
+    std::cout << "[NadeTextSinkPlugin@" << this << "] start() called" << std::endl;
     state_ = nda::PluginState::Running;
-    // GUI created and managed by MainWindow's QDockWidget system
+
+    // Clear accumulated audio from previous runs
+    sharedAccumulatedAudio_.clear();
+
     return true;
 }
 
 void NadeTextSinkPlugin::stop() {
-    if (guiWidget_) {
-        guiWidget_->hide();
-    }
+    std::cout << "[NadeTextSinkPlugin@" << this << "] stop() called" << std::endl;
     state_ = nda::PluginState::Initialized;
+
+    // Clear accumulated audio
+    sharedAccumulatedAudio_.clear();
 }
 
 // =============================================================================
@@ -86,7 +92,7 @@ void NadeTextSinkPlugin::setParameter(const std::string& key, const std::string&
 
 std::string NadeTextSinkPlugin::getParameter(const std::string& key) const {
     if (key == "message_count") {
-        return std::to_string(messageCount_);
+        return std::to_string(sharedMessageCount_);
     }
     return "";
 }
@@ -119,10 +125,18 @@ bool NadeTextSinkPlugin::writeAudio(const AudioBuffer& buffer) {
         }
     }
 
-    // Accumulate audio
-    size_t oldSize = accumulatedAudio_.size();
-    accumulatedAudio_.resize(oldSize + monoInput.size());
-    std::copy(monoInput.begin(), monoInput.end(), accumulatedAudio_.begin() + oldSize);
+    // Debug: Check if we received text-encoded audio
+    if (monoInput.size() >= 2) {
+        if (isTextEncodedAudio(monoInput)) {
+            std::cout << "[NadeTextSinkPlugin@" << this << "] Received text-encoded audio: "
+                      << monoInput.size() << " samples" << std::endl;
+        }
+    }
+
+    // Accumulate audio (use shared buffer)
+    size_t oldSize = sharedAccumulatedAudio_.size();
+    sharedAccumulatedAudio_.resize(oldSize + monoInput.size());
+    std::copy(monoInput.begin(), monoInput.end(), sharedAccumulatedAudio_.begin() + oldSize);
 
     // Try to decode text from accumulated audio
     tryDecodeBuffer();
@@ -135,45 +149,63 @@ bool NadeTextSinkPlugin::writeAudio(const AudioBuffer& buffer) {
 // =============================================================================
 
 void NadeTextSinkPlugin::tryDecodeBuffer() {
-    // Need at least magic + length
-    if (accumulatedAudio_.size() < 2) {
+    // Need at least magic + length (use shared buffer)
+    if (sharedAccumulatedAudio_.size() < 2) {
         return;
     }
 
-    // Check for text-encoded audio
-    if (!isTextEncodedAudio(accumulatedAudio_)) {
-        // Not text data - clear buffer (might be silence or noise)
-        // Only clear if we have a reasonable amount of non-text data
-        if (accumulatedAudio_.size() > 1024) {
-            accumulatedAudio_.clear();
-        }
-        return;
-    }
+    // Scan for text magic number throughout the buffer (not just at start)
+    // Text messages might arrive at any position due to silence padding
+    size_t scanStart = 0;
+    bool foundText = false;
 
-    // Try to decode
-    auto text = audioBufferToText(accumulatedAudio_);
-    if (text.has_value()) {
-        // Success! Display message
-        displayMessage(text.value());
-
-        // Calculate consumed samples: magic + length + text bytes
-        size_t textLength = static_cast<size_t>(accumulatedAudio_[1]);
-        size_t consumedSamples = textLength + 2;
-
-        // Remove consumed samples from buffer
-        if (consumedSamples >= accumulatedAudio_.size()) {
-            accumulatedAudio_.clear();
-        } else {
-            accumulatedAudio_.erase(
-                accumulatedAudio_.begin(),
-                accumulatedAudio_.begin() + consumedSamples
+    while (scanStart + 2 <= sharedAccumulatedAudio_.size()) {
+        // Check if magic number exists at this position
+        if (std::abs(sharedAccumulatedAudio_[scanStart] - MAGIC_NUMBER) <= MAGIC_TOLERANCE) {
+            // Found magic number! Try to decode from this position
+            std::vector<float> textChunk(
+                sharedAccumulatedAudio_.begin() + scanStart,
+                sharedAccumulatedAudio_.end()
             );
+
+            auto text = audioBufferToText(textChunk);
+            if (text.has_value()) {
+                // Success! Display message
+                std::cout << "[NadeTextSinkPlugin@" << this << "] Found text at offset "
+                          << scanStart << ", decoded: \"" << text.value() << "\"" << std::endl;
+                displayMessage(text.value());
+
+                // Calculate consumed samples: magic + length + text bytes
+                size_t textLength = static_cast<size_t>(sharedAccumulatedAudio_[scanStart + 1]);
+                size_t consumedSamples = scanStart + textLength + 2;
+
+                // Remove everything up to and including this message
+                if (consumedSamples >= sharedAccumulatedAudio_.size()) {
+                    sharedAccumulatedAudio_.clear();
+                } else {
+                    sharedAccumulatedAudio_.erase(
+                        sharedAccumulatedAudio_.begin(),
+                        sharedAccumulatedAudio_.begin() + consumedSamples
+                    );
+                }
+
+                foundText = true;
+                // Try to decode more messages (recursively)
+                tryDecodeBuffer();
+                return;
+            }
         }
 
-        // Try to decode more messages
-        tryDecodeBuffer();
+        // Move to next sample
+        scanStart++;
     }
-    // If decode fails, we might need more data - keep accumulating
+
+    // No text found - clear old silence samples if buffer is getting large
+    if (!foundText && sharedAccumulatedAudio_.size() > 1024) {
+        std::cout << "[NadeTextSinkPlugin@" << this << "] No text found in "
+                  << sharedAccumulatedAudio_.size() << " samples, clearing" << std::endl;
+        sharedAccumulatedAudio_.clear();
+    }
 }
 
 // =============================================================================
@@ -181,32 +213,50 @@ void NadeTextSinkPlugin::tryDecodeBuffer() {
 // =============================================================================
 
 QWidget* NadeTextSinkPlugin::createDockableGui() {
-    guiWidget_ = new QWidget();
-    QVBoxLayout* layout = new QVBoxLayout(guiWidget_);
+    std::cout << "[NadeTextSinkPlugin@" << this << "] createDockableGui() called" << std::endl;
+
+    // Only create GUI once (singleton pattern)
+    if (sharedGuiWidget_) {
+        std::cout << "[NadeTextSinkPlugin@" << this << "] GUI already exists, returning existing widget" << std::endl;
+        return sharedGuiWidget_;
+    }
+
+    sharedGuiWidget_ = new QWidget();
+    QVBoxLayout* layout = new QVBoxLayout(sharedGuiWidget_);
+    layout->setContentsMargins(10, 10, 10, 10);
+    layout->setSpacing(8);
 
     // Title label
-    QLabel* titleLabel = new QLabel("Nade Text Messaging (RX)");
+    QLabel* titleLabel = new QLabel("Text Output");
     titleLabel->setStyleSheet("font-weight: bold; font-size: 14px;");
     layout->addWidget(titleLabel);
 
     // Status label
-    statusLabel_ = new QLabel("Received Messages: 0");
-    layout->addWidget(statusLabel_);
+    sharedStatusLabel_ = new QLabel("Received: 0");
+    sharedStatusLabel_->setStyleSheet("font-size: 11px; color: #888;");
+    layout->addWidget(sharedStatusLabel_);
 
     // Text output (read-only)
-    outputText_ = new QTextEdit();
-    outputText_->setReadOnly(true);
-    outputText_->setPlaceholderText("Waiting for messages...");
-    layout->addWidget(outputText_);
+    sharedOutputText_ = new QTextEdit();
+    sharedOutputText_->setReadOnly(true);
+    sharedOutputText_->setPlaceholderText("Waiting for messages...");
+    layout->addWidget(sharedOutputText_, 1);
 
-    guiWidget_->setLayout(layout);
-    return guiWidget_;
+    sharedGuiWidget_->setLayout(layout);
+
+    std::cout << "[NadeTextSinkPlugin@" << this << "] GUI created (shared)" << std::endl;
+    std::cout << "[NadeTextSinkPlugin@" << this << "] sharedOutputText_=" << sharedOutputText_ << std::endl;
+
+    return sharedGuiWidget_;
 }
 
 void NadeTextSinkPlugin::displayMessage(const std::string& text) {
-    messageCount_++;
+    sharedMessageCount_++;
 
-    if (outputText_) {
+    std::cout << "[NadeTextSinkPlugin@" << this << "] displayMessage: \"" << text
+              << "\" (total: " << sharedMessageCount_ << ")" << std::endl;
+
+    if (sharedOutputText_) {
         // Get timestamp
         QString timestamp = QDateTime::currentDateTime().toString("hh:mm:ss");
 
@@ -216,16 +266,20 @@ void NadeTextSinkPlugin::displayMessage(const std::string& text) {
             .arg(QString::fromStdString(text));
 
         // Append to output
-        outputText_->append(formattedMsg);
+        sharedOutputText_->append(formattedMsg);
 
         // Scroll to bottom
-        QTextCursor cursor = outputText_->textCursor();
+        QTextCursor cursor = sharedOutputText_->textCursor();
         cursor.movePosition(QTextCursor::End);
-        outputText_->setTextCursor(cursor);
+        sharedOutputText_->setTextCursor(cursor);
+
+        std::cout << "[NadeTextSinkPlugin@" << this << "] Message displayed in GUI" << std::endl;
+    } else {
+        std::cout << "[NadeTextSinkPlugin@" << this << "] WARNING: sharedOutputText_ is null!" << std::endl;
     }
 
-    if (statusLabel_) {
-        statusLabel_->setText(QString("Received Messages: %1").arg(messageCount_));
+    if (sharedStatusLabel_) {
+        sharedStatusLabel_->setText(QString("Received: %1").arg(sharedMessageCount_));
     }
 }
 

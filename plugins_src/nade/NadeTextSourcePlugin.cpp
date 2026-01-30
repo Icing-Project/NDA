@@ -8,7 +8,6 @@
 
 #include "NadeTextSourcePlugin.h"
 #include "TextEncoding.h"
-#include "crypto/CryptoManager.h"
 
 #include <QWidget>
 #include <QVBoxLayout>
@@ -18,8 +17,19 @@
 #include <QLabel>
 #include <QTimer>
 #include <QMessageBox>
+#include <iostream>
 
 namespace nade {
+
+// Initialize static GUI widgets and audio buffer (shared across all instances)
+QWidget* NadeTextSourcePlugin::sharedGuiWidget_ = nullptr;
+QTextEdit* NadeTextSourcePlugin::sharedInputText_ = nullptr;
+QPushButton* NadeTextSourcePlugin::sharedSendButton_ = nullptr;
+QLabel* NadeTextSourcePlugin::sharedStatusLabel_ = nullptr;
+QTimer* NadeTextSourcePlugin::sharedTxCheckTimer_ = nullptr;
+std::atomic<nda::PluginState> NadeTextSourcePlugin::sharedState_(nda::PluginState::Unloaded);
+std::vector<float> NadeTextSourcePlugin::sharedPendingAudio_;
+std::atomic<size_t> NadeTextSourcePlugin::sharedAudioPosition_(0);
 
 NadeTextSourcePlugin::NadeTextSourcePlugin() = default;
 
@@ -49,17 +59,9 @@ nda::PluginInfo NadeTextSourcePlugin::getInfo() const {
 bool NadeTextSourcePlugin::initialize() {
     state_ = nda::PluginState::Initialized;
 
-    // Get keys from CryptoManager
-    nda::CryptoManager& cm = nda::CryptoManager::instance();
-
-    if (cm.hasX25519KeyPair() && cm.hasX25519PeerPublicKey()) {
-        auto privKey = cm.exportX25519PrivateKeyBytes();
-        auto pubKey = cm.exportX25519PublicKeyBytes();
-        auto peerKey = cm.exportX25519PeerPublicKeyBytes();
-
-        // Create NadeExternalIO instance
-        nade_ = NadeExternalIO::createInstance(privKey, pubKey, peerKey, sampleRate_, true);
-    }
+    // Note: This plugin uses simple text-as-audio encoding (TextEncoding.h)
+    // It does NOT require NadeExternalIO or crypto keys
+    // Text flows through the pipeline as encoded audio samples
 
     return true;
 }
@@ -67,39 +69,72 @@ bool NadeTextSourcePlugin::initialize() {
 void NadeTextSourcePlugin::shutdown() {
     stop();
 
-    if (txCheckTimer_) {
-        txCheckTimer_->stop();
-        txCheckTimer_ = nullptr;
-    }
+    // Note: Don't clean up static GUI widgets here - they're shared across all instances
+    // Only clean them up when the last instance is destroyed
 
-    // Clean up GUI (all child widgets are owned by guiWidget_)
-    if (guiWidget_) {
-        guiWidget_->close();
-        delete guiWidget_;
-        guiWidget_ = nullptr;
-        inputText_ = nullptr;
-        sendButton_ = nullptr;
-        statusLabel_ = nullptr;
-    }
-
-    nade_.reset();
     state_ = nda::PluginState::Unloaded;
+    sharedState_ = nda::PluginState::Unloaded;
 }
 
 bool NadeTextSourcePlugin::start() {
+    std::cout << "[NadeTextSourcePlugin@" << this << "] start() called" << std::endl;
+    std::cout << "[NadeTextSourcePlugin@" << this << "] Current state: "
+              << static_cast<int>(state_) << std::endl;
+
     state_ = nda::PluginState::Running;
-    // GUI created and managed by MainWindow's QDockWidget system
+    sharedState_ = nda::PluginState::Running;  // Update shared state
+
+    std::cout << "[NadeTextSourcePlugin@" << this << "] State set to Running" << std::endl;
+    std::cout << "[NadeTextSourcePlugin@" << this << "] sharedGuiWidget_=" << sharedGuiWidget_ << std::endl;
+    std::cout << "[NadeTextSourcePlugin@" << this << "] sharedInputText_=" << sharedInputText_ << std::endl;
+    std::cout << "[NadeTextSourcePlugin@" << this << "] sharedSendButton_=" << sharedSendButton_ << std::endl;
+
+    // Enable text input when pipeline is running (use shared widgets)
+    if (sharedInputText_) {
+        sharedInputText_->setEnabled(true);
+        std::cout << "[NadeTextSourcePlugin@" << this << "] Text input enabled (shared)" << std::endl;
+    } else {
+        std::cout << "[NadeTextSourcePlugin@" << this << "] WARNING: sharedInputText_ is null!" << std::endl;
+    }
+
+    if (sharedSendButton_) {
+        sharedSendButton_->setEnabled(true);
+        std::cout << "[NadeTextSourcePlugin@" << this << "] Send button enabled (shared)" << std::endl;
+    } else {
+        std::cout << "[NadeTextSourcePlugin@" << this << "] WARNING: sharedSendButton_ is null!" << std::endl;
+    }
+
+    if (sharedStatusLabel_) {
+        sharedStatusLabel_->setText("Status: Ready");
+    } else {
+        std::cout << "[NadeTextSourcePlugin@" << this << "] WARNING: sharedStatusLabel_ is null!" << std::endl;
+    }
+
     return true;
 }
 
 void NadeTextSourcePlugin::stop() {
-    if (txCheckTimer_) {
-        txCheckTimer_->stop();
-    }
-    if (guiWidget_) {
-        guiWidget_->hide();
-    }
+    std::cout << "[NadeTextSourcePlugin@" << this << "] stop() called" << std::endl;
+
     state_ = nda::PluginState::Initialized;
+    sharedState_ = nda::PluginState::Initialized;  // Update shared state
+
+    // Disable text input when pipeline is stopped (use shared widgets)
+    if (sharedInputText_) {
+        sharedInputText_->setEnabled(false);
+        std::cout << "[NadeTextSourcePlugin@" << this << "] Text input disabled (shared)" << std::endl;
+    }
+    if (sharedSendButton_) {
+        sharedSendButton_->setEnabled(false);
+        std::cout << "[NadeTextSourcePlugin@" << this << "] Send button disabled (shared)" << std::endl;
+    }
+    if (sharedStatusLabel_) {
+        sharedStatusLabel_->setText("Status: Pipeline stopped");
+    }
+
+    // Clear any pending audio (use shared buffer)
+    sharedPendingAudio_.clear();
+    sharedAudioPosition_ = 0;
 }
 
 // =============================================================================
@@ -128,7 +163,8 @@ bool NadeTextSourcePlugin::readAudio(AudioBuffer& buffer) {
     int frameCount = buffer.getFrameCount();
 
     // If no pending audio, output silence
-    if (pendingAudio_.empty() || audioPosition_ >= pendingAudio_.size()) {
+    size_t currentPos = sharedAudioPosition_.load();
+    if (sharedPendingAudio_.empty() || currentPos >= sharedPendingAudio_.size()) {
         for (int ch = 0; ch < buffer.getChannelCount(); ++ch) {
             float* data = buffer.getChannelData(ch);
             if (data) {
@@ -138,14 +174,14 @@ bool NadeTextSourcePlugin::readAudio(AudioBuffer& buffer) {
         return true;
     }
 
-    // Output pending audio
-    size_t samplesAvailable = pendingAudio_.size() - audioPosition_;
+    // Output pending audio (use shared buffer)
+    size_t samplesAvailable = sharedPendingAudio_.size() - currentPos;
     size_t toCopy = std::min(static_cast<size_t>(frameCount), samplesAvailable);
 
     for (int ch = 0; ch < buffer.getChannelCount(); ++ch) {
         float* data = buffer.getChannelData(ch);
         if (data) {
-            std::copy_n(pendingAudio_.data() + audioPosition_, toCopy, data);
+            std::copy_n(sharedPendingAudio_.data() + currentPos, toCopy, data);
 
             // Zero remaining samples
             if (toCopy < static_cast<size_t>(frameCount)) {
@@ -154,12 +190,16 @@ bool NadeTextSourcePlugin::readAudio(AudioBuffer& buffer) {
         }
     }
 
-    audioPosition_ += toCopy;
+    // Update position atomically
+    size_t newPos = currentPos + toCopy;
+    sharedAudioPosition_ = newPos;
 
     // Clear pending audio if fully consumed
-    if (audioPosition_ >= pendingAudio_.size()) {
-        pendingAudio_.clear();
-        audioPosition_ = 0;
+    if (newPos >= sharedPendingAudio_.size()) {
+        sharedPendingAudio_.clear();
+        sharedAudioPosition_ = 0;
+        std::cout << "[NadeTextSourcePlugin@" << this << "] Audio transmission complete ("
+                  << toCopy << " samples sent)" << std::endl;
     }
 
     return true;
@@ -170,62 +210,88 @@ bool NadeTextSourcePlugin::readAudio(AudioBuffer& buffer) {
 // =============================================================================
 
 QWidget* NadeTextSourcePlugin::createDockableGui() {
-    guiWidget_ = new QWidget();
-    QVBoxLayout* mainLayout = new QVBoxLayout(guiWidget_);
+    std::cout << "[NadeTextSourcePlugin@" << this << "] createDockableGui() called" << std::endl;
+
+    // Only create GUI once (singleton pattern)
+    if (sharedGuiWidget_) {
+        std::cout << "[NadeTextSourcePlugin@" << this << "] GUI already exists, returning existing widget" << std::endl;
+        return sharedGuiWidget_;
+    }
+
+    sharedGuiWidget_ = new QWidget();
+    QVBoxLayout* mainLayout = new QVBoxLayout(sharedGuiWidget_);
+    mainLayout->setContentsMargins(10, 10, 10, 10);
+    mainLayout->setSpacing(8);
 
     // Title label
-    QLabel* titleLabel = new QLabel("Nade Text Messaging (TX)");
+    QLabel* titleLabel = new QLabel("Text Input");
     titleLabel->setStyleSheet("font-weight: bold; font-size: 14px;");
     mainLayout->addWidget(titleLabel);
 
     // Status label
-    statusLabel_ = new QLabel("Status: Waiting for keys...");
-    mainLayout->addWidget(statusLabel_);
+    sharedStatusLabel_ = new QLabel("Status: Pipeline stopped");
+    sharedStatusLabel_->setStyleSheet("font-size: 11px; color: #888;");
+    mainLayout->addWidget(sharedStatusLabel_);
 
     // Message input
-    QLabel* inputLabel = new QLabel("Message to Send (max 256 chars):");
+    QLabel* inputLabel = new QLabel("Message (max 256 chars):");
+    inputLabel->setStyleSheet("font-size: 11px; margin-top: 5px;");
     mainLayout->addWidget(inputLabel);
 
-    inputText_ = new QTextEdit();
-    inputText_->setMaximumHeight(80);
-    inputText_->setPlaceholderText("Type your message here...");
-    inputText_->setEnabled(false);
-    mainLayout->addWidget(inputText_);
+    sharedInputText_ = new QTextEdit();
+    sharedInputText_->setMaximumHeight(80);
+    sharedInputText_->setPlaceholderText("Type your message here...");
+    mainLayout->addWidget(sharedInputText_, 1);
 
     // Send button
-    sendButton_ = new QPushButton("Send");
-    sendButton_->setEnabled(false);
-    mainLayout->addWidget(sendButton_);
+    sharedSendButton_ = new QPushButton("Send");
+    sharedSendButton_->setMaximumHeight(30);
+    mainLayout->addWidget(sharedSendButton_);
 
-    // Connect send button
-    QObject::connect(sendButton_, &QPushButton::clicked, [this]() {
+    // Add stretch to push everything to the top
+    mainLayout->addStretch();
+
+    // Connect send button (capture 'this' is safe because we're storing a global instance reference)
+    QObject::connect(sharedSendButton_, &QPushButton::clicked, [this]() {
         onSendClicked();
     });
 
-    // Timer to check TX status and key availability
-    txCheckTimer_ = new QTimer(guiWidget_);
-    QObject::connect(txCheckTimer_, &QTimer::timeout, [this]() {
+    // Timer to check TX status
+    sharedTxCheckTimer_ = new QTimer(sharedGuiWidget_);
+    QObject::connect(sharedTxCheckTimer_, &QTimer::timeout, [this]() {
         checkTxStatus();
     });
-    txCheckTimer_->start(100);
+    sharedTxCheckTimer_->start(100);
 
-    guiWidget_->setLayout(mainLayout);
-    return guiWidget_;
+    // Set initial state based on current shared state
+    bool shouldEnable = (sharedState_ == nda::PluginState::Running);
+    sharedInputText_->setEnabled(shouldEnable);
+    sharedSendButton_->setEnabled(shouldEnable);
+
+    std::cout << "[NadeTextSourcePlugin@" << this << "] GUI created (shared), widgets "
+              << (shouldEnable ? "enabled" : "disabled")
+              << " (state=" << static_cast<int>(sharedState_.load()) << ")" << std::endl;
+    std::cout << "[NadeTextSourcePlugin@" << this << "] sharedInputText_=" << sharedInputText_ << std::endl;
+    std::cout << "[NadeTextSourcePlugin@" << this << "] sharedSendButton_=" << sharedSendButton_ << std::endl;
+
+    sharedGuiWidget_->setLayout(mainLayout);
+    return sharedGuiWidget_;
 }
 
 void NadeTextSourcePlugin::onSendClicked() {
-    if (!nade_) {
-        if (statusLabel_) {
-            statusLabel_->setText("Status: Error - Not initialized");
+    // Check if pipeline is running (use shared state)
+    if (sharedState_ != nda::PluginState::Running) {
+        if (sharedStatusLabel_) {
+            sharedStatusLabel_->setText("Status: Pipeline not running");
         }
         return;
     }
 
-    if (!inputText_) {
+    if (!sharedInputText_) {
         return;
     }
 
-    QString text = inputText_->toPlainText().trimmed();
+    QString text = sharedInputText_->toPlainText().trimmed();
     if (text.isEmpty()) {
         return;
     }
@@ -234,59 +300,70 @@ void NadeTextSourcePlugin::onSendClicked() {
 
     // Validate length
     if (stdText.length() > MAX_MESSAGE_LENGTH) {
-        QMessageBox::warning(guiWidget_, "Message Too Long",
+        QMessageBox::warning(sharedGuiWidget_, "Message Too Long",
             QString("Message exceeds %1 characters. Please shorten it.")
                 .arg(MAX_MESSAGE_LENGTH));
         return;
     }
 
-    // Send to Nade
-    auto result = nade_->sendTextMessage(stdText);
-    if (result.success) {
-        // Disable send button during transmission
-        sendButton_->setEnabled(false);
-        sendButton_->setText("Transmitting...");
-        statusLabel_->setText("Status: Transmitting...");
+    // Encode text as audio for pipeline (use shared buffer)
+    sharedPendingAudio_ = textToAudioBuffer(stdText);
+    sharedAudioPosition_ = 0;
 
-        // Clear input for next message
-        inputText_->clear();
+    std::cout << "[NadeTextSourcePlugin] Sending message: \"" << stdText
+              << "\" (" << sharedPendingAudio_.size() << " samples)" << std::endl;
 
-        // Encode text as audio for pipeline trigger
-        pendingAudio_ = textToAudioBuffer(stdText);
-        audioPosition_ = 0;
-
-    } else {
-        QMessageBox::warning(guiWidget_, "Send Failed",
-            QString::fromStdString(result.error_message));
+    // Update UI
+    if (sharedSendButton_) {
+        sharedSendButton_->setEnabled(false);
+        sharedSendButton_->setText("Transmitting...");
     }
+    if (sharedStatusLabel_) {
+        sharedStatusLabel_->setText("Status: Transmitting...");
+    }
+
+    // Clear input for next message
+    sharedInputText_->clear();
 }
 
 void NadeTextSourcePlugin::checkTxStatus() {
-    if (!nade_) {
-        // Check if keys are now available
-        nda::CryptoManager& cm = nda::CryptoManager::instance();
-        if (cm.hasX25519KeyPair() && cm.hasX25519PeerPublicKey()) {
-            auto privKey = cm.exportX25519PrivateKeyBytes();
-            auto pubKey = cm.exportX25519PublicKeyBytes();
-            auto peerKey = cm.exportX25519PeerPublicKeyBytes();
+    // Ensure widgets are in correct state based on shared plugin state
+    if (sharedInputText_ && sharedSendButton_) {
+        bool shouldBeEnabled = (sharedState_ == nda::PluginState::Running);
 
-            nade_ = NadeExternalIO::createInstance(privKey, pubKey, peerKey, sampleRate_, true);
+        // Check if transmission is complete (all audio has been sent) - use shared buffer
+        size_t pos = sharedAudioPosition_.load();
+        bool isTransmitting = !sharedPendingAudio_.empty() && (pos < sharedPendingAudio_.size());
 
-            if (nade_) {
-                if (inputText_) inputText_->setEnabled(true);
-                if (sendButton_) sendButton_->setEnabled(true);
-                if (statusLabel_) statusLabel_->setText("Status: Connected - Ready to send");
+        if (shouldBeEnabled) {
+            // Pipeline is running
+            if (!isTransmitting) {
+                // Not transmitting - enable send button
+                if (!sharedSendButton_->isEnabled()) {
+                    sharedSendButton_->setEnabled(true);
+                    sharedSendButton_->setText("Send");
+                    if (sharedStatusLabel_) {
+                        sharedStatusLabel_->setText("Status: Ready");
+                    }
+                }
             }
-        }
-        return;
-    }
-
-    if (!nade_->isTransmitting()) {
-        // Re-enable send button after transmission completes
-        if (sendButton_ && !sendButton_->isEnabled()) {
-            sendButton_->setEnabled(true);
-            sendButton_->setText("Send");
-            statusLabel_->setText("Status: Connected - Ready to send");
+            // Enable text input if pipeline is running
+            if (!sharedInputText_->isEnabled()) {
+                sharedInputText_->setEnabled(true);
+                std::cout << "[NadeTextSourcePlugin@" << this << "] checkTxStatus: Enabled input (pipeline running)" << std::endl;
+            }
+        } else {
+            // Pipeline is not running - disable everything
+            if (sharedInputText_->isEnabled()) {
+                sharedInputText_->setEnabled(false);
+                std::cout << "[NadeTextSourcePlugin@" << this << "] checkTxStatus: Disabled input (pipeline stopped)" << std::endl;
+            }
+            if (sharedSendButton_->isEnabled()) {
+                sharedSendButton_->setEnabled(false);
+                if (sharedStatusLabel_) {
+                    sharedStatusLabel_->setText("Status: Pipeline stopped");
+                }
+            }
         }
     }
 }

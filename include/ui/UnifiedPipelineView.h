@@ -52,6 +52,7 @@ signals:
     void txPipelineStopped();
     void rxPipelineStarted();
     void rxPipelineStopped();
+    void pluginSelected(const QString& pluginName, bool selected);
 
 private slots:
     // TX pipeline

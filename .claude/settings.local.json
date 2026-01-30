@@ -35,7 +35,7 @@
       "Bash(test:*)",
       "Bash(flatpak-spawn --host cat:*)",
       "Bash(cat:*)",
-      "Bash(ldd:*)"
+      "Bash(ldd:*)",
       "Bash(cmake --build:*)",
       "Bash(test:*)",
       "Bash(\"/mnt/c/Users/Steph/AppData/Local/Programs/Python/Python310/python.exe\" -m pip list)",

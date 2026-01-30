@@ -18,9 +18,9 @@
 #pragma once
 
 #include "plugins/AudioSourcePlugin.h"
-#include "NadeExternalIO.h"
 #include <memory>
 #include <vector>
+#include <atomic>
 
 // Forward declarations for Qt types (avoid Qt header in plugin header)
 class QWidget;
@@ -94,23 +94,25 @@ private:
     void onSendClicked();
     void checkTxStatus();
 
-    std::shared_ptr<NadeExternalIO> nade_;
     nda::PluginState state_ = nda::PluginState::Unloaded;
     nda::AudioSourceCallback audioCallback_;
 
     int sampleRate_ = 48000;
     int channelCount_ = 2;
 
-    // GUI widgets (owned by Qt parent)
-    QWidget* guiWidget_ = nullptr;
-    QTextEdit* inputText_ = nullptr;
-    QPushButton* sendButton_ = nullptr;
-    QLabel* statusLabel_ = nullptr;
-    QTimer* txCheckTimer_ = nullptr;
+    // GUI widgets (shared across all instances - singleton pattern)
+    // This allows the pipeline instance to control the GUI created by the dock instance
+    static QWidget* sharedGuiWidget_;
+    static QTextEdit* sharedInputText_;
+    static QPushButton* sharedSendButton_;
+    static QLabel* sharedStatusLabel_;
+    static QTimer* sharedTxCheckTimer_;
+    static std::atomic<nda::PluginState> sharedState_;
 
-    // Pending audio output (text encoded as audio)
-    std::vector<float> pendingAudio_;
-    size_t audioPosition_ = 0;
+    // Pending audio output (shared across all instances)
+    // The GUI instance writes to this, the pipeline instance reads from it
+    static std::vector<float> sharedPendingAudio_;
+    static std::atomic<size_t> sharedAudioPosition_;
 };
 
 }  // namespace nade

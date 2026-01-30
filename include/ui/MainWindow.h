@@ -29,6 +29,10 @@ public:
     void stopBothPipelines();
     void printSoakTestReport();
 
+public slots:
+    // Plugin dock visibility management
+    void onPluginSelected(const QString& pluginName, bool selected);
+
 private slots:
     void onTXPipelineStarted();
     void onTXPipelineStopped();

@@ -657,6 +657,14 @@ void UnifiedPipelineView::processPendingPluginChange()
 // v2.2: Actual plugin change handlers (original logic)
 void UnifiedPipelineView::processTXSourceChange(int index)
 {
+    // Hide previous text plugin if any
+    if (txSource_) {
+        auto prevInfo = txSource_->getInfo();
+        if (prevInfo.name.find("Text") != std::string::npos) {
+            emit pluginSelected(QString::fromStdString(prevInfo.name), false);
+        }
+    }
+
     if (index <= 0 || !pluginManager_) {
         txSource_ = nullptr;
         updateTXStatus();
@@ -671,6 +679,16 @@ void UnifiedPipelineView::processTXSourceChange(int index)
     // if (txSource_) {
     //     pluginSidebar_->showPluginConfig(txSource_);
     // }
+
+    // Show text plugin dock if selected
+    if (txSource_) {
+        auto info = txSource_->getInfo();
+        std::cout << "[UnifiedPipelineView] TX Source selected: " << info.name
+                  << " (ptr=" << txSource_.get() << ")" << std::endl;
+        if (info.name.find("Text") != std::string::npos) {
+            emit pluginSelected(QString::fromStdString(info.name), true);
+        }
+    }
 
     updateTXStatus();
     updateConfigButtonStates();
@@ -699,6 +717,14 @@ void UnifiedPipelineView::processTXProcessorChange(int index)
 
 void UnifiedPipelineView::processTXSinkChange(int index)
 {
+    // Hide previous text plugin if any
+    if (txSink_) {
+        auto prevInfo = txSink_->getInfo();
+        if (prevInfo.name.find("Text") != std::string::npos) {
+            emit pluginSelected(QString::fromStdString(prevInfo.name), false);
+        }
+    }
+
     if (index <= 0 || !pluginManager_) {
         txSink_ = nullptr;
         updateTXStatus();
@@ -714,12 +740,28 @@ void UnifiedPipelineView::processTXSinkChange(int index)
     //     pluginSidebar_->showPluginConfig(txSink_);
     // }
 
+    // Show text plugin dock if selected
+    if (txSink_) {
+        auto info = txSink_->getInfo();
+        if (info.name.find("Text") != std::string::npos) {
+            emit pluginSelected(QString::fromStdString(info.name), true);
+        }
+    }
+
     updateTXStatus();
     updateConfigButtonStates();
 }
 
 void UnifiedPipelineView::processRXSourceChange(int index)
 {
+    // Hide previous text plugin if any
+    if (rxSource_) {
+        auto prevInfo = rxSource_->getInfo();
+        if (prevInfo.name.find("Text") != std::string::npos) {
+            emit pluginSelected(QString::fromStdString(prevInfo.name), false);
+        }
+    }
+
     if (index <= 0 || !pluginManager_) {
         rxSource_ = nullptr;
         updateRXStatus();
@@ -734,6 +776,14 @@ void UnifiedPipelineView::processRXSourceChange(int index)
     // if (rxSource_) {
     //     pluginSidebar_->showPluginConfig(rxSource_);
     // }
+
+    // Show text plugin dock if selected
+    if (rxSource_) {
+        auto info = rxSource_->getInfo();
+        if (info.name.find("Text") != std::string::npos) {
+            emit pluginSelected(QString::fromStdString(info.name), true);
+        }
+    }
 
     updateRXStatus();
     updateConfigButtonStates();
@@ -762,6 +812,14 @@ void UnifiedPipelineView::processRXProcessorChange(int index)
 
 void UnifiedPipelineView::processRXSinkChange(int index)
 {
+    // Hide previous text plugin if any
+    if (rxSink_) {
+        auto prevInfo = rxSink_->getInfo();
+        if (prevInfo.name.find("Text") != std::string::npos) {
+            emit pluginSelected(QString::fromStdString(prevInfo.name), false);
+        }
+    }
+
     if (index <= 0 || !pluginManager_) {
         rxSink_ = nullptr;
         updateRXStatus();
@@ -776,6 +834,14 @@ void UnifiedPipelineView::processRXSinkChange(int index)
     // if (rxSink_) {
     //     pluginSidebar_->showPluginConfig(rxSink_);
     // }
+
+    // Show text plugin dock if selected
+    if (rxSink_) {
+        auto info = rxSink_->getInfo();
+        if (info.name.find("Text") != std::string::npos) {
+            emit pluginSelected(QString::fromStdString(info.name), true);
+        }
+    }
 
     updateRXStatus();
     updateConfigButtonStates();
@@ -905,6 +971,16 @@ void UnifiedPipelineView::onStartTXClicked()
 {
     if (!txPipeline_ || !txSource_ || !txSink_) return;
 
+    std::cout << "[UnifiedPipelineView] Starting TX pipeline..." << std::endl;
+    std::cout << "[UnifiedPipelineView] TX Source: " << txSource_->getInfo().name
+              << " (ptr=" << txSource_.get() << ")" << std::endl;
+    if (txProcessor_) {
+        std::cout << "[UnifiedPipelineView] TX Processor: " << txProcessor_->getInfo().name
+                  << " (ptr=" << txProcessor_.get() << ")" << std::endl;
+    }
+    std::cout << "[UnifiedPipelineView] TX Sink: " << txSink_->getInfo().name
+              << " (ptr=" << txSink_.get() << ")" << std::endl;
+
     txPipeline_->setSource(txSource_);
     if (txProcessor_) txPipeline_->setProcessor(txProcessor_);
     txPipeline_->setSink(txSink_);
@@ -914,10 +990,12 @@ void UnifiedPipelineView::onStartTXClicked()
         return;
     }
 
+    std::cout << "[UnifiedPipelineView] Calling txPipeline_->start()..." << std::endl;
     if (!txPipeline_->start()) {
         QMessageBox::critical(this, "TX Pipeline Error", "Failed to start TX pipeline");
         return;
     }
+    std::cout << "[UnifiedPipelineView] TX pipeline started successfully" << std::endl;
 
     startTXButton_->setEnabled(false);
     stopTXButton_->setEnabled(true);

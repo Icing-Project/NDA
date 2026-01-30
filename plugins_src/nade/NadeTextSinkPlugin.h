@@ -94,14 +94,14 @@ private:
     int sampleRate_ = 48000;
     int channelCount_ = 2;
 
-    // GUI widgets (owned by Qt parent)
-    QWidget* guiWidget_ = nullptr;
-    QTextEdit* outputText_ = nullptr;
-    QLabel* statusLabel_ = nullptr;
+    // GUI widgets (shared across all instances - singleton pattern)
+    static QWidget* sharedGuiWidget_;
+    static QTextEdit* sharedOutputText_;
+    static QLabel* sharedStatusLabel_;
 
-    // Audio accumulation buffer for decoding
-    std::vector<float> accumulatedAudio_;
-    size_t messageCount_ = 0;
+    // Audio accumulation buffer for decoding (shared across all instances)
+    static std::vector<float> sharedAccumulatedAudio_;
+    static size_t sharedMessageCount_;
 };
 
 }  // namespace nade
