@@ -171,8 +171,6 @@ void NadeTextSinkPlugin::tryDecodeBuffer() {
             auto text = audioBufferToText(textChunk);
             if (text.has_value()) {
                 // Success! Display message
-                std::cout << "[NadeTextSinkPlugin@" << this << "] Found text at offset "
-                          << scanStart << ", decoded: \"" << text.value() << "\"" << std::endl;
                 displayMessage(text.value());
 
                 // Calculate consumed samples: magic + length + text bytes
@@ -202,8 +200,6 @@ void NadeTextSinkPlugin::tryDecodeBuffer() {
 
     // No text found - clear old silence samples if buffer is getting large
     if (!foundText && sharedAccumulatedAudio_.size() > 1024) {
-        std::cout << "[NadeTextSinkPlugin@" << this << "] No text found in "
-                  << sharedAccumulatedAudio_.size() << " samples, clearing" << std::endl;
         sharedAccumulatedAudio_.clear();
     }
 }
@@ -213,11 +209,9 @@ void NadeTextSinkPlugin::tryDecodeBuffer() {
 // =============================================================================
 
 QWidget* NadeTextSinkPlugin::createDockableGui() {
-    std::cout << "[NadeTextSinkPlugin@" << this << "] createDockableGui() called" << std::endl;
 
     // Only create GUI once (singleton pattern)
     if (sharedGuiWidget_) {
-        std::cout << "[NadeTextSinkPlugin@" << this << "] GUI already exists, returning existing widget" << std::endl;
         return sharedGuiWidget_;
     }
 
@@ -244,17 +238,11 @@ QWidget* NadeTextSinkPlugin::createDockableGui() {
 
     sharedGuiWidget_->setLayout(layout);
 
-    std::cout << "[NadeTextSinkPlugin@" << this << "] GUI created (shared)" << std::endl;
-    std::cout << "[NadeTextSinkPlugin@" << this << "] sharedOutputText_=" << sharedOutputText_ << std::endl;
-
     return sharedGuiWidget_;
 }
 
 void NadeTextSinkPlugin::displayMessage(const std::string& text) {
     sharedMessageCount_++;
-
-    std::cout << "[NadeTextSinkPlugin@" << this << "] displayMessage: \"" << text
-              << "\" (total: " << sharedMessageCount_ << ")" << std::endl;
 
     if (sharedOutputText_) {
         // Get timestamp
@@ -273,7 +261,6 @@ void NadeTextSinkPlugin::displayMessage(const std::string& text) {
         cursor.movePosition(QTextCursor::End);
         sharedOutputText_->setTextCursor(cursor);
 
-        std::cout << "[NadeTextSinkPlugin@" << this << "] Message displayed in GUI" << std::endl;
     } else {
         std::cout << "[NadeTextSinkPlugin@" << this << "] WARNING: sharedOutputText_ is null!" << std::endl;
     }

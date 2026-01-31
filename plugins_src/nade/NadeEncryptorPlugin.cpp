@@ -65,13 +65,13 @@ void NadeEncryptorPlugin::shutdown() {
 }
 
 bool NadeEncryptorPlugin::start() {
-    // Try to get existing singleton (may have been created by text source plugin)
+    // Try to get existing singleton (shared between encryptor and decryptor)
     if (!nade_) {
         nade_ = NadeExternalIO::getInstance();
     }
 
     if (!nade_) {
-        std::cout << "[NadeEncryptor] Starting without keys (configure in Text Source window)" << std::endl;
+        std::cout << "[NadeEncryptor] Starting without keys - import X25519 keys via Crypto menu" << std::endl;
     }
 
     state_ = nda::PluginState::Running;
@@ -102,6 +102,25 @@ std::string NadeEncryptorPlugin::getParameter(const std::string& key) const {
     if (key == "transmitting") {
         return (nade_ && nade_->isTransmitting()) ? "true" : "false";
     }
+    // Diagnostic parameters (v3.0.1)
+    if (key == "messages_processed") {
+        return std::to_string(messagesProcessed_);
+    }
+    if (key == "messages_decoded") {
+        return std::to_string(messagesDecoded_);
+    }
+    if (key == "decode_failures") {
+        return std::to_string(decodeFailures_);
+    }
+    if (key == "queue_failures") {
+        return std::to_string(queueFailures_);
+    }
+    if (key == "last_error") {
+        return lastError_;
+    }
+    if (key == "last_message") {
+        return lastMessage_;
+    }
     return "";
 }
 
@@ -121,14 +140,68 @@ bool NadeEncryptorPlugin::processAudio(AudioBuffer& buffer) {
         return true;
     }
 
+    int frameCount = buffer.getFrameCount();
+
+    // =========================================================================
+    // TEXT INPUT: Decode text from input audio (from NadeTextSourcePlugin)
+    // =========================================================================
+
+    // Check if input buffer contains encoded text message
+    // Note: Buffer size is fixed at 512 samples, max encoded message is 258 samples
+    // Therefore, complete messages always fit in a single buffer
+
+    float* inputData = buffer.getChannelData(0);
+
+    if (inputData && frameCount >= 2) {
+        // Attempt to decode text from input buffer
+        auto maybeText = audioBufferToText(inputData, frameCount);
+
+        if (maybeText.has_value()) {
+            // Successfully decoded text from input
+            std::string text = maybeText.value();
+            messagesDecoded_++;
+
+            // Queue message for Python processing (via NadeExternalIO)
+            NadeResult result = nade_->sendTextMessage(text);
+
+            if (result.success) {
+                // Message successfully queued
+                messagesProcessed_++;
+                lastMessage_ = text;
+                lastError_ = "";
+
+                std::cout << "[NadeEncryptor] Message queued for transmission ("
+                          << text.length() << " chars): \""
+                          << text << "\"" << std::endl;
+            } else {
+                // Failed to queue message
+                queueFailures_++;
+                lastError_ = result.error_message;
+
+                std::cerr << "[NadeEncryptor] ERROR: Failed to queue message: "
+                          << result.error_message << std::endl;
+                std::cerr << "[NadeEncryptor]        Message was: \""
+                          << text << "\" (" << text.length() << " chars)" << std::endl;
+            }
+        } else {
+            // No text detected in input buffer - this is normal
+            // (Input may be silence or real audio)
+            // No logging needed for this case to avoid spam
+        }
+    }
+
+    // =========================================================================
+    // FSK OUTPUT: Read from pre-buffer and output
+    // =========================================================================
+
     // Calculate buffer duration
-    float durationMs = (static_cast<float>(buffer.getFrameCount()) / sampleRate_) * 1000.0f;
+    float durationMs = (static_cast<float>(frameCount) / sampleRate_) * 1000.0f;
 
     // Get FSK audio from pre-buffer (non-blocking)
+    // Pre-buffer is filled by Python worker thread
     std::vector<float> fskAudio = nade_->getTxAudio(durationMs);
 
-    // Write to all channels
-    int frameCount = buffer.getFrameCount();
+    // Write FSK to all output channels
     for (int ch = 0; ch < buffer.getChannelCount(); ++ch) {
         float* channelData = buffer.getChannelData(ch);
         if (channelData) {

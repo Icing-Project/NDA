@@ -68,13 +68,13 @@ void NadeDecryptorPlugin::shutdown() {
 }
 
 bool NadeDecryptorPlugin::start() {
-    // Try to get existing singleton (may have been created by text source plugin)
+    // Try to get existing singleton (shared between encryptor and decryptor)
     if (!nade_) {
         nade_ = NadeExternalIO::getInstance();
     }
 
     if (!nade_) {
-        std::cout << "[NadeDecryptor] Starting without keys (configure in Text Source window)" << std::endl;
+        std::cout << "[NadeDecryptor] Starting without keys - import X25519 keys via Crypto menu" << std::endl;
     }
 
     state_ = nda::PluginState::Running;

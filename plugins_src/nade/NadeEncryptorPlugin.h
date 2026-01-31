@@ -6,7 +6,8 @@
  * it to the NDA TX pipeline. The audio thread never blocks on Python/GIL.
  *
  * Responsibilities:
- *   - Receive "text as audio" input (ignore it - text already queued in Nade)
+ *   - Receive "text as audio" input and decode it using TextEncoding.h
+ *   - Queue decoded text to NadeExternalIO for Python processing
  *   - Read pre-buffered FSK audio from NadeExternalIO
  *   - Output FSK to NDA TX pipeline
  *
@@ -98,6 +99,14 @@ private:
 
     int sampleRate_ = 48000;
     int channelCount_ = 2;
+
+    // Diagnostic tracking
+    size_t messagesProcessed_ = 0;      // Total messages successfully queued
+    size_t messagesDecoded_ = 0;        // Total text decode attempts
+    size_t decodeFailures_ = 0;         // Failed text decodes
+    size_t queueFailures_ = 0;          // Failed sendTextMessage() calls
+    std::string lastError_;             // Last error message
+    std::string lastMessage_;           // Last message queued (for debugging)
 };
 
 }  // namespace nade

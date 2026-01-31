@@ -77,17 +77,9 @@ void NadeTextSourcePlugin::shutdown() {
 }
 
 bool NadeTextSourcePlugin::start() {
-    std::cout << "[NadeTextSourcePlugin@" << this << "] start() called" << std::endl;
-    std::cout << "[NadeTextSourcePlugin@" << this << "] Current state: "
-              << static_cast<int>(state_) << std::endl;
-
     state_ = nda::PluginState::Running;
     sharedState_ = nda::PluginState::Running;  // Update shared state
 
-    std::cout << "[NadeTextSourcePlugin@" << this << "] State set to Running" << std::endl;
-    std::cout << "[NadeTextSourcePlugin@" << this << "] sharedGuiWidget_=" << sharedGuiWidget_ << std::endl;
-    std::cout << "[NadeTextSourcePlugin@" << this << "] sharedInputText_=" << sharedInputText_ << std::endl;
-    std::cout << "[NadeTextSourcePlugin@" << this << "] sharedSendButton_=" << sharedSendButton_ << std::endl;
 
     // Enable text input when pipeline is running (use shared widgets)
     if (sharedInputText_) {
@@ -122,11 +114,9 @@ void NadeTextSourcePlugin::stop() {
     // Disable text input when pipeline is stopped (use shared widgets)
     if (sharedInputText_) {
         sharedInputText_->setEnabled(false);
-        std::cout << "[NadeTextSourcePlugin@" << this << "] Text input disabled (shared)" << std::endl;
     }
     if (sharedSendButton_) {
         sharedSendButton_->setEnabled(false);
-        std::cout << "[NadeTextSourcePlugin@" << this << "] Send button disabled (shared)" << std::endl;
     }
     if (sharedStatusLabel_) {
         sharedStatusLabel_->setText("Status: Pipeline stopped");
@@ -198,8 +188,6 @@ bool NadeTextSourcePlugin::readAudio(AudioBuffer& buffer) {
     if (newPos >= sharedPendingAudio_.size()) {
         sharedPendingAudio_.clear();
         sharedAudioPosition_ = 0;
-        std::cout << "[NadeTextSourcePlugin@" << this << "] Audio transmission complete ("
-                  << toCopy << " samples sent)" << std::endl;
     }
 
     return true;
@@ -210,11 +198,9 @@ bool NadeTextSourcePlugin::readAudio(AudioBuffer& buffer) {
 // =============================================================================
 
 QWidget* NadeTextSourcePlugin::createDockableGui() {
-    std::cout << "[NadeTextSourcePlugin@" << this << "] createDockableGui() called" << std::endl;
 
     // Only create GUI once (singleton pattern)
     if (sharedGuiWidget_) {
-        std::cout << "[NadeTextSourcePlugin@" << this << "] GUI already exists, returning existing widget" << std::endl;
         return sharedGuiWidget_;
     }
 
@@ -267,12 +253,6 @@ QWidget* NadeTextSourcePlugin::createDockableGui() {
     bool shouldEnable = (sharedState_ == nda::PluginState::Running);
     sharedInputText_->setEnabled(shouldEnable);
     sharedSendButton_->setEnabled(shouldEnable);
-
-    std::cout << "[NadeTextSourcePlugin@" << this << "] GUI created (shared), widgets "
-              << (shouldEnable ? "enabled" : "disabled")
-              << " (state=" << static_cast<int>(sharedState_.load()) << ")" << std::endl;
-    std::cout << "[NadeTextSourcePlugin@" << this << "] sharedInputText_=" << sharedInputText_ << std::endl;
-    std::cout << "[NadeTextSourcePlugin@" << this << "] sharedSendButton_=" << sharedSendButton_ << std::endl;
 
     sharedGuiWidget_->setLayout(mainLayout);
     return sharedGuiWidget_;
@@ -350,13 +330,11 @@ void NadeTextSourcePlugin::checkTxStatus() {
             // Enable text input if pipeline is running
             if (!sharedInputText_->isEnabled()) {
                 sharedInputText_->setEnabled(true);
-                std::cout << "[NadeTextSourcePlugin@" << this << "] checkTxStatus: Enabled input (pipeline running)" << std::endl;
             }
         } else {
             // Pipeline is not running - disable everything
             if (sharedInputText_->isEnabled()) {
                 sharedInputText_->setEnabled(false);
-                std::cout << "[NadeTextSourcePlugin@" << this << "] checkTxStatus: Disabled input (pipeline stopped)" << std::endl;
             }
             if (sharedSendButton_->isEnabled()) {
                 sharedSendButton_->setEnabled(false);
