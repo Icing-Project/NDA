@@ -9,7 +9,6 @@
 #include "NadeExternalIO.h"
 
 #include <chrono>
-#include <cstring>
 #include <iostream>
 #include <stdexcept>
 
@@ -202,9 +201,35 @@ void NadeExternalIO::stopWorkerThread() {
 void NadeExternalIO::workerThreadFunction() {
 #ifdef NDA_ENABLE_PYTHON
     try {
+        std::cout << "[NadeExternalIO] Starting worker thread..." << std::endl;
+
+        // Set Python home to the BASE Python installation (not venv)
+        // UV venvs don't contain the stdlib - they reference the base Python installation
+        // We'll add venv's site-packages to sys.path separately below
+#ifdef _WIN32
+        // For UV venvs, we need the base Python installation (where stdlib is)
+        // Try NDA_PYTHON_HOME first (should point to base Python with stdlib)
+        const char* pythonHomeEnv = std::getenv("NDA_PYTHON_HOME");
+
+        if (pythonHomeEnv) {
+            // Convert to wide string for Py_SetPythonHome on Windows
+            size_t len = strlen(pythonHomeEnv);
+            std::wstring pythonHome(len, L'\0');
+            std::mbstowcs(&pythonHome[0], pythonHomeEnv, len);
+            Py_SetPythonHome(pythonHome.c_str());
+            std::cout << "[NadeExternalIO] Set PYTHONHOME to: " << pythonHomeEnv << std::endl;
+        } else {
+            std::cout << "[NadeExternalIO] Warning: NDA_PYTHON_HOME not set" << std::endl;
+            std::cout << "[NadeExternalIO] Hint: Set NDA_PYTHON_HOME to base Python installation (with stdlib)" << std::endl;
+            std::cout << "[NadeExternalIO]       For UV: C:\\Users\\...\\uv\\python\\cpython-3.12.11-windows-x86_64-none" << std::endl;
+        }
+#endif
+
         // Initialize Python interpreter
+        std::cout << "[NadeExternalIO] Initializing Python interpreter..." << std::endl;
         py::scoped_interpreter guard{};
         pythonInitialized_.store(true);
+        std::cout << "[NadeExternalIO] Python interpreter initialized" << std::endl;
 
         // Add Nade-Python to sys.path (sibling directory to NDA)
         // This allows importing the nade module without installing it
@@ -212,24 +237,87 @@ void NadeExternalIO::workerThreadFunction() {
         py::module_ os = py::module_::import("os");
         py::list path = sys.attr("path");
 
-        // Check for NADE_PYTHON_PATH environment variable first
+        // Print Python version and path
+        std::cout << "[NadeExternalIO] Python version: "
+                  << sys.attr("version").cast<std::string>() << std::endl;
+        std::cout << "[NadeExternalIO] Python sys.path before modification:" << std::endl;
+        for (auto item : path) {
+            std::cout << "  - " << item.cast<std::string>() << std::endl;
+        }
+
+        // Add venv site-packages to sys.path (CRITICAL for finding nade-python installed via UV)
+        // This is where UV installs nade-python and its dependencies
+        py::object venv_path = os.attr("environ").attr("get")("VIRTUAL_ENV", py::none());
+        if (!venv_path.is_none()) {
+            std::string venvStr = venv_path.cast<std::string>();
+            // Construct site-packages path: {VIRTUAL_ENV}/Lib/site-packages on Windows
+            py::object path_join = os.attr("path").attr("join");
+            py::object site_packages = path_join(venvStr, "Lib", "site-packages");
+            std::string sitePackagesStr = site_packages.cast<std::string>();
+
+            std::cout << "[NadeExternalIO] Adding venv site-packages: " << sitePackagesStr << std::endl;
+            path.attr("insert")(0, sitePackagesStr);
+        } else {
+            std::cout << "[NadeExternalIO] Warning: VIRTUAL_ENV not set, may not find nade-python" << std::endl;
+        }
+
+        // Check for NADE_PYTHON_PATH environment variable (fallback for direct Nade-Python path)
         py::object env_path = os.attr("environ").attr("get")("NADE_PYTHON_PATH", py::none());
         if (!env_path.is_none()) {
             std::string nadePath = env_path.cast<std::string>();
+            std::cout << "[NadeExternalIO] Using NADE_PYTHON_PATH: " << nadePath << std::endl;
             path.attr("insert")(0, nadePath);
         }
 
-        // Try relative paths from NDA executable (../Nade-Python)
-        // Also add the current working directory variants
+        // Try relative paths from NDA executable (../Nade-Python) as last resort
         path.attr("insert")(0, "../Nade-Python");
         path.attr("insert")(0, "../../Nade-Python");
         path.attr("insert")(0, "../../../Nade-Python");
 
-        // Import NDA adapter module
-        py::module_ nade_adapters = py::module_::import("nade.adapters.nda_adapter");
-        py::object NDAAdapterClass = nade_adapters.attr("NDAAdapter");
+        std::cout << "[NadeExternalIO] Python sys.path after modification:" << std::endl;
+        for (auto item : path) {
+            std::cout << "  - " << item.cast<std::string>() << std::endl;
+        }
+
+        // Import NDA adapter module with defensive error handling
+        std::cout << "[NadeExternalIO] Importing nade.adapters.nda_adapter..." << std::endl;
+        std::cout << "[NadeExternalIO] (This may take a moment on first import)" << std::endl;
+
+        py::module_ nade_adapters;
+        py::object NDAAdapterClass;
+
+        try {
+            nade_adapters = py::module_::import("nade.adapters.nda_adapter");
+            std::cout << "[NadeExternalIO] Module imported successfully" << std::endl;
+        } catch (const py::error_already_set& e) {
+            std::cerr << "[NadeExternalIO] FATAL: Failed to import nade.adapters.nda_adapter" << std::endl;
+
+            // Try to safely get error message using e.what() (C++ method, should be safe)
+            try {
+                std::cerr << "[NadeExternalIO] Error message: " << e.what() << std::endl;
+            } catch (...) {
+                std::cerr << "[NadeExternalIO] (Could not retrieve error message)" << std::endl;
+            }
+
+            // Restore the exception for outer handler without accessing Python objects
+            throw std::runtime_error(std::string("Failed to import nade.adapters.nda_adapter: ") + e.what());
+        } catch (...) {
+            std::cerr << "[NadeExternalIO] FATAL: Unknown error importing nade.adapters.nda_adapter" << std::endl;
+            throw std::runtime_error("Unknown error importing nade.adapters.nda_adapter");
+        }
+
+        try {
+            NDAAdapterClass = nade_adapters.attr("NDAAdapter");
+            std::cout << "[NadeExternalIO] NDAAdapter class obtained" << std::endl;
+        } catch (...) {
+            std::cerr << "[NadeExternalIO] FATAL: Failed to get NDAAdapter class from module" << std::endl;
+            throw std::runtime_error("Failed to get NDAAdapter class");
+        }
 
         // Convert keys to Python bytes
+        std::cout << "[NadeExternalIO] Converting keys (sizes: priv=" << localPrivateKey_.size()
+                  << ", pub=" << localPublicKey_.size() << ", remote=" << remotePublicKey_.size()
+                  << ")" << std::endl;
         py::bytes privKey(reinterpret_cast<const char*>(localPrivateKey_.data()),
                          localPrivateKey_.size());
         py::bytes pubKey(reinterpret_cast<const char*>(localPublicKey_.data()),
@@ -238,20 +326,25 @@ void NadeExternalIO::workerThreadFunction() {
                            remotePublicKey_.size());
 
         // Create adapter instance
+        std::cout << "[NadeExternalIO] Creating NDAAdapter instance (sampleRate=" << ndaSampleRate_
+                  << ", initiator=" << isInitiator_ << ", discovery=" << enableDiscovery_ << ")" << std::endl;
         py::object adapter = NDAAdapterClass(
             privKey, pubKey, remoteKey, ndaSampleRate_, "4fsk", isInitiator_, enableDiscovery_);
+        std::cout << "[NadeExternalIO] NDAAdapter created successfully" << std::endl;
 
         // Store for later access
         ndaAdapter_ = new py::object(adapter);
 
         sessionEstablished_.store(true);
+        std::cout << "[NadeExternalIO] Session established, entering main loop" << std::endl;
 
         // Worker loop
         while (running_.load()) {
-            // Poll handshake phase for UI
-            int phase = adapter.attr("get_handshake_phase")().cast<int>();
-            handshakePhase_.store(phase, std::memory_order_relaxed);
-            // Process TX: Generate FSK audio and fill pre-buffer
+            try {
+                // Poll handshake phase for UI
+                int phase = adapter.attr("get_handshake_phase")().cast<int>();
+                handshakePhase_.store(phase, std::memory_order_relaxed);
+                // Process TX: Generate FSK audio and fill pre-buffer
             if (txPreBuffer_->space() >= static_cast<size_t>(ndaSampleRate_ / 100)) {
                 // Generate ~10ms of audio
                 float durationMs = 10.67f;
@@ -331,16 +424,57 @@ void NadeExternalIO::workerThreadFunction() {
                 }
             }
 
-            // Sleep to avoid busy-waiting
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                // Sleep to avoid busy-waiting
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+
+            } catch (py::error_already_set& e) {
+                std::cerr << "[NadeExternalIO] Python error in worker loop: " << e.what() << std::endl;
+                if (e.trace()) {
+                    std::cerr << "  Traceback: " << py::str(e.trace()).cast<std::string>() << std::endl;
+                }
+                // Continue running, don't crash the thread
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            } catch (const std::exception& e) {
+                std::cerr << "[NadeExternalIO] Error in worker loop: " << e.what() << std::endl;
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
         }
 
         // Cleanup
+        std::cout << "[NadeExternalIO] Worker loop exited, cleaning up..." << std::endl;
         delete static_cast<py::object*>(ndaAdapter_);
         ndaAdapter_ = nullptr;
+        std::cout << "[NadeExternalIO] Cleanup complete" << std::endl;
 
+    } catch (py::error_already_set& e) {
+        std::cerr << "\n========================================" << std::endl;
+        std::cerr << "[NadeExternalIO] Python exception in worker thread" << std::endl;
+        std::cerr.flush();  // Force output before potential crash
+
+        // Try to discard the error without accessing its details to avoid crashes
+        try {
+            e.discard_as_unraisable(__func__);
+        } catch (...) {
+            // Even discarding failed, just continue
+        }
+
+        std::cerr << "[NadeExternalIO] Python exception occurred (details unavailable to prevent crash)" << std::endl;
+        std::cerr << "[NadeExternalIO] Run manual test: python -c \"from nade.adapters.nda_adapter import NDAAdapter\"" << std::endl;
+        std::cerr << "========================================\n" << std::endl;
+        std::cerr.flush();
+
+        pythonInitialized_.store(false);
     } catch (const std::exception& e) {
-        std::cerr << "[NadeExternalIO] Worker thread error: " << e.what() << std::endl;
+        std::cerr << "\n========================================" << std::endl;
+        std::cerr << "[NadeExternalIO] C++ exception in worker thread:" << std::endl;
+        std::cerr << "  What: " << e.what() << std::endl;
+        std::cerr << "========================================\n" << std::endl;
+        pythonInitialized_.store(false);
+    } catch (...) {
+        std::cerr << "\n========================================" << std::endl;
+        std::cerr << "[NadeExternalIO] Unknown exception in worker thread" << std::endl;
+        std::cerr << "========================================\n" << std::endl;
+        pythonInitialized_.store(false);
     }
 #else
     // No Python support - just sleep until stopped
@@ -452,7 +586,7 @@ void NadeExternalIO::forceHandshake(bool isInitiator) {
         py::object event = ForceHandshakeClass(py::arg("role") = role);
 
         // Feed to engine
-        py::object engine = adapter->attr("engine");
+        py::object engine = (*adapter).attr("engine");
         engine.attr("feed_event")(event);
 
         std::cout << "[NadeExternalIO] Force handshake: " << role << std::endl;
@@ -473,7 +607,7 @@ void NadeExternalIO::restartDiscovery() {
         py::object* adapter = static_cast<py::object*>(ndaAdapter_);
 
         // Call public restart_discovery method on adapter
-        adapter->attr("restart_discovery")();
+        (*adapter).attr("restart_discovery")();
 
         std::cout << "[NadeExternalIO] Restarted discovery" << std::endl;
     } catch (const std::exception& e) {
