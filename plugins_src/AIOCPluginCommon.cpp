@@ -873,8 +873,31 @@ bool AIOCSession::initRenderClient()
             hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &device);
         }
     } else {
-        std::cerr << "[AIOCSession] Opening DEFAULT render device (no device_id specified)" << std::endl;
-        hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &device);
+        // Auto-detect AIOC device when no device_id specified
+        std::cerr << "[AIOCSession] No device_id specified, searching for AIOC device..." << std::endl;
+        std::vector<WASAPIDeviceInfo> devices = enumerateWASAPIDevices(1); // 1 = eRender
+        std::string aiocDeviceId;
+        for (const auto& dev : devices) {
+            if (dev.friendlyName.find("AIOC") != std::string::npos) {
+                aiocDeviceId = dev.id;
+                std::cerr << "[AIOCSession] Found AIOC render device: " << dev.friendlyName << std::endl;
+                break;
+            }
+        }
+
+        if (!aiocDeviceId.empty()) {
+            std::wstring wid(aiocDeviceId.begin(), aiocDeviceId.end());
+            hr = enumerator->GetDevice(wid.c_str(), &device);
+            if (SUCCEEDED(hr)) {
+                std::cerr << "[AIOCSession] Successfully opened auto-detected AIOC device" << std::endl;
+            } else {
+                std::cerr << "[AIOCSession] Failed to open auto-detected AIOC device, using default" << std::endl;
+                hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &device);
+            }
+        } else {
+            std::cerr << "[AIOCSession] No AIOC device found, using system default" << std::endl;
+            hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &device);
+        }
     }
     enumerator->Release();
     if (FAILED(hr) || !device) {
@@ -925,10 +948,39 @@ bool AIOCSession::initCaptureClient()
     if (FAILED(hr) || !enumerator) return false;
 
     if (!deviceInId_.empty()) {
+        std::cerr << "[AIOCSession] Opening capture device by ID: " << deviceInId_ << std::endl;
         std::wstring wid(deviceInId_.begin(), deviceInId_.end());
         hr = enumerator->GetDevice(wid.c_str(), &device);
+        if (FAILED(hr)) {
+            std::cerr << "[AIOCSession] Failed to open device by ID, falling back to default" << std::endl;
+            hr = enumerator->GetDefaultAudioEndpoint(eCapture, eConsole, &device);
+        }
     } else {
-        hr = enumerator->GetDefaultAudioEndpoint(eCapture, eConsole, &device);
+        // Auto-detect AIOC device when no device_id specified
+        std::cerr << "[AIOCSession] No device_id specified, searching for AIOC device..." << std::endl;
+        std::vector<WASAPIDeviceInfo> devices = enumerateWASAPIDevices(0); // 0 = eCapture
+        std::string aiocDeviceId;
+        for (const auto& dev : devices) {
+            if (dev.friendlyName.find("AIOC") != std::string::npos) {
+                aiocDeviceId = dev.id;
+                std::cerr << "[AIOCSession] Found AIOC capture device: " << dev.friendlyName << std::endl;
+                break;
+            }
+        }
+
+        if (!aiocDeviceId.empty()) {
+            std::wstring wid(aiocDeviceId.begin(), aiocDeviceId.end());
+            hr = enumerator->GetDevice(wid.c_str(), &device);
+            if (SUCCEEDED(hr)) {
+                std::cerr << "[AIOCSession] Successfully opened auto-detected AIOC device" << std::endl;
+            } else {
+                std::cerr << "[AIOCSession] Failed to open auto-detected AIOC device, using default" << std::endl;
+                hr = enumerator->GetDefaultAudioEndpoint(eCapture, eConsole, &device);
+            }
+        } else {
+            std::cerr << "[AIOCSession] No AIOC device found, using system default" << std::endl;
+            hr = enumerator->GetDefaultAudioEndpoint(eCapture, eConsole, &device);
+        }
     }
     enumerator->Release();
     if (FAILED(hr) || !device) return false;

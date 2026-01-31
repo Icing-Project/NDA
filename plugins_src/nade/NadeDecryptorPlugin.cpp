@@ -73,8 +73,22 @@ bool NadeDecryptorPlugin::start() {
         nade_ = NadeExternalIO::getInstance();
     }
 
+    // If still no instance, check if keys are now available (may have been imported after initialize())
     if (!nade_) {
-        std::cout << "[NadeDecryptor] Starting without keys - import X25519 keys via Crypto menu" << std::endl;
+        nda::CryptoManager& cm = nda::CryptoManager::instance();
+
+        if (cm.hasX25519KeyPair() && cm.hasX25519PeerPublicKey()) {
+            std::cout << "[NadeDecryptor] Keys detected - creating NadeExternalIO instance" << std::endl;
+
+            auto privKey = cm.exportX25519PrivateKeyBytes();
+            auto pubKey = cm.exportX25519PublicKeyBytes();
+            auto peerKey = cm.exportX25519PeerPublicKeyBytes();
+
+            nade_ = NadeExternalIO::createInstance(privKey, pubKey, peerKey, sampleRate_, false);
+            keysReceived_ = true;
+        } else {
+            std::cout << "[NadeDecryptor] Starting without keys - import X25519 keys via Crypto menu" << std::endl;
+        }
     }
 
     state_ = nda::PluginState::Running;

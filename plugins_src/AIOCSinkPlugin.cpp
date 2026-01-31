@@ -125,16 +125,22 @@ public:
             std::cerr << "[AIOCSink] setParameter device_id: '" << value << "' (old: '" << oldId
                       << "', state: " << static_cast<int>(state_) << ")" << std::endl;
             session_.setDeviceIds(session_.deviceInId(), value);
-            // v2.2: Reconnect to new device if currently running
-            if (state_ == PluginState::Running && value != oldId && !value.empty()) {
-                std::cerr << "[AIOCSink] Device changed while running, reconnecting..." << std::endl;
-                session_.stop();
-                session_.disconnect();
-                if (session_.connect() && session_.start()) {
-                    std::cerr << "[AIOCSink] Successfully switched to new device" << std::endl;
-                } else {
-                    std::cerr << "[AIOCSink] Failed to switch device" << std::endl;
-                    state_ = PluginState::Error;
+            // v2.2: Reconnect to new device if device ID changed
+            if (value != oldId) {
+                if (state_ == PluginState::Running) {
+                    std::cerr << "[AIOCSink] Device changed while running, reconnecting..." << std::endl;
+                    session_.stop();
+                    session_.disconnect();
+                    if (session_.connect() && session_.start()) {
+                        std::cerr << "[AIOCSink] Successfully switched to new device" << std::endl;
+                    } else {
+                        std::cerr << "[AIOCSink] Failed to switch device" << std::endl;
+                        state_ = PluginState::Error;
+                    }
+                } else if (state_ == PluginState::Initialized && session_.isConnected()) {
+                    // Disconnect so next start() will connect to the new device
+                    std::cerr << "[AIOCSink] Device changed while initialized, disconnecting..." << std::endl;
+                    session_.disconnect();
                 }
             }
         } else if (key == "cdc_port") {
