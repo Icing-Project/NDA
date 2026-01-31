@@ -1,11 +1,20 @@
 [project]
 name = "NDA"
-version = "1.0.5"
+version = "2.2.5"
 description = "Nade Desktop App - Wiring audio streams"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
-    "numpy>=1.20.0",
+    "numpy>=2.0.0",
     "sounddevice>=0.4.6",
     "soundcard>=0.4.2",
+    "pybind11>=2.11.0",
 ]
+
+[dependency-groups]
+dev = [
+    "nade-python",
+]
+
+[tool.uv.sources]
+nade-python = { path = "../Nade-Python", editable = true }
