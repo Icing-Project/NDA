@@ -550,7 +550,7 @@ public:
         // Log progress every 100 calls (include ring buffer diagnostics)
         // ============================================================
 
-        if (writeCalls_ % 100 == 0) {
+        if (writeCalls_ % 1000 == 0) {
             double secondsWritten = static_cast<double>(framesWritten_) / sampleRate_;
             int bufferFill = ringBuffer_.getAvailableRead();
             double fillMs = (bufferFill * 1000.0) / sampleRate_;

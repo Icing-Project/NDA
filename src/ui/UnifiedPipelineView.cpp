@@ -1123,8 +1123,10 @@ void UnifiedPipelineView::onBridgeModeClicked()
 
     // Step 7: Manually trigger selection handlers - now executes immediately
     onTXSourceChanged(txSourceIdx);
+    onTXProcessorChanged(0);  // Clear TX processor for passthrough
     onTXSinkChanged(txSinkIdx);
     onRXSourceChanged(rxSourceIdx);
+    onRXProcessorChanged(0);  // Clear RX processor for passthrough
     onRXSinkChanged(rxSinkIdx);
 
     // Step 8: Disable batch update mode

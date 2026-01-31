@@ -55,6 +55,18 @@ public:
                       << session_.getTelemetry().lastMessage << std::endl;
             return false;
         }
+
+        // CRITICAL: Query actual format from session after connect (may differ from requested)
+        int actualSampleRate = session_.sampleRate();
+        int actualDeviceChannels = session_.channels();
+        if (actualSampleRate != sampleRate_ || actualDeviceChannels != deviceChannels_) {
+            std::cerr << "[AIOCSource] WARNING: Format mismatch after connect!" << std::endl;
+            std::cerr << "[AIOCSource] Requested: " << sampleRate_ << "Hz, " << deviceChannels_ << "ch device" << std::endl;
+            std::cerr << "[AIOCSource] Actual: " << actualSampleRate << "Hz, " << actualDeviceChannels << "ch device" << std::endl;
+            sampleRate_ = actualSampleRate;
+            deviceChannels_ = actualDeviceChannels;
+        }
+
         if (!session_.start()) {
             state_ = PluginState::Error;
             return false;

@@ -24,17 +24,23 @@ if(WIN32)
     set(_nda_default_python_executable "")
     set(_nda_default_python_root_dir "")
 
-    if(EXISTS "${CMAKE_SOURCE_DIR}/venv/Scripts/python.exe")
-        set(_nda_default_python_executable "${CMAKE_SOURCE_DIR}/venv/Scripts/python.exe")
-        if(EXISTS "${CMAKE_SOURCE_DIR}/venv/pyvenv.cfg")
-            file(STRINGS "${CMAKE_SOURCE_DIR}/venv/pyvenv.cfg" _nda_venv_home_lines REGEX "^home\\s*=")
+    # Helper macro to parse pyvenv.cfg and extract the 'home' directory
+    macro(_nda_parse_pyvenv_cfg cfg_path out_var)
+        if(EXISTS "${cfg_path}")
+            file(STRINGS "${cfg_path}" _nda_venv_home_lines REGEX "^home\\s*=")
             if(_nda_venv_home_lines)
                 list(GET _nda_venv_home_lines 0 _nda_venv_home_line)
-                string(REGEX REPLACE "^home\\s*=\\s*" "" _nda_default_python_root_dir "${_nda_venv_home_line}")
+                string(REGEX REPLACE "^home\\s*=\\s*" "" ${out_var} "${_nda_venv_home_line}")
             endif()
         endif()
+    endmacro()
+
+    if(EXISTS "${CMAKE_SOURCE_DIR}/venv/Scripts/python.exe")
+        set(_nda_default_python_executable "${CMAKE_SOURCE_DIR}/venv/Scripts/python.exe")
+        _nda_parse_pyvenv_cfg("${CMAKE_SOURCE_DIR}/venv/pyvenv.cfg" _nda_default_python_root_dir)
     elseif(EXISTS "${CMAKE_SOURCE_DIR}/.venv/Scripts/python.exe")
         set(_nda_default_python_executable "${CMAKE_SOURCE_DIR}/.venv/Scripts/python.exe")
+        _nda_parse_pyvenv_cfg("${CMAKE_SOURCE_DIR}/.venv/pyvenv.cfg" _nda_default_python_root_dir)
     endif()
 
     if(NDA_PYTHON_EXECUTABLE STREQUAL "" AND _nda_default_python_executable)
@@ -334,6 +340,51 @@ if(NDA_ENABLE_PYTHON)
         ${Python3_NumPy_INCLUDE_DIRS}
     )
     target_link_libraries(${PROJECT_NAME} Python3::Python)
+
+    # On Windows, copy the Python DLL to the build output directory.
+    # UV-managed venvs (and some other venvs) don't include the DLL, so we need
+    # to copy it from the base Python installation.
+    if(WIN32)
+        # Determine the Python DLL name (e.g., python312.dll)
+        set(_nda_python_dll_name "python${Python3_VERSION_MAJOR}${Python3_VERSION_MINOR}.dll")
+
+        # Find the DLL in these locations (in order of preference):
+        # 1. Python3_RUNTIME_LIBRARY_DIRS (if set by find_package)
+        # 2. Python3_ROOT_DIR (base Python installation)
+        # 3. Directory containing Python3_EXECUTABLE
+        set(_nda_python_dll_search_paths
+            ${Python3_RUNTIME_LIBRARY_DIRS}
+            "${Python3_ROOT_DIR}"
+            "${NDA_PYTHON_ROOT_DIR}"
+        )
+        # Add the directory containing the Python executable
+        get_filename_component(_nda_python_exe_dir "${Python3_EXECUTABLE}" DIRECTORY)
+        list(APPEND _nda_python_dll_search_paths "${_nda_python_exe_dir}")
+
+        # Search for the DLL
+        unset(_nda_python_dll_path CACHE)
+        find_file(_nda_python_dll_path
+            NAMES "${_nda_python_dll_name}"
+            PATHS ${_nda_python_dll_search_paths}
+            NO_DEFAULT_PATH
+        )
+
+        if(_nda_python_dll_path)
+            message(STATUS "  Python DLL found: ${_nda_python_dll_path}")
+            message(STATUS "  Will copy to build output directory")
+
+            # Copy DLL to each configuration's output directory
+            add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${_nda_python_dll_path}"
+                    "$<TARGET_FILE_DIR:${PROJECT_NAME}>/${_nda_python_dll_name}"
+                COMMENT "Copying ${_nda_python_dll_name} to output directory"
+            )
+        else()
+            message(WARNING "  Python DLL (${_nda_python_dll_name}) not found in: ${_nda_python_dll_search_paths}")
+            message(WARNING "  You may need to manually copy it to the build output directory or add its location to PATH")
+        endif()
+    endif()
 endif()
 
 # Plugin builds (shared libraries placed under build/plugins)
@@ -503,7 +554,12 @@ endif()
 # ============================================================================
 
 # Nade common library (shared between plugins)
-add_library(NadeCommon STATIC
+# IMPORTANT: This MUST be a SHARED library so all Nade plugins share the same
+# singleton instance of NadeExternalIO. If this were STATIC, each plugin DLL
+# would get its own copy of the singleton, causing multiple Python interpreter
+# initializations which crashes with "The interpreter is already running".
+# (See PipeBridgeSession for the same pattern.)
+add_library(NadeCommon SHARED
     plugins_src/nade/NadeExternalIO.cpp
     plugins_src/nade/NadeExternalIO.h
     plugins_src/nade/TextEncoding.h
@@ -511,6 +567,22 @@ add_library(NadeCommon STATIC
 target_include_directories(NadeCommon PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/plugins_src
+)
+target_compile_definitions(NadeCommon PRIVATE NADE_COMMON_EXPORTS)
+if(WIN32)
+    target_compile_definitions(NadeCommon PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+endif()
+set_target_properties(NadeCommon PROPERTIES
+    LIBRARY_OUTPUT_DIRECTORY ${PLUGIN_OUTPUT_DIR}
+    RUNTIME_OUTPUT_DIRECTORY ${PLUGIN_OUTPUT_DIR}
+    LIBRARY_OUTPUT_DIRECTORY_RELEASE ${PLUGIN_OUTPUT_DIR}
+    LIBRARY_OUTPUT_DIRECTORY_DEBUG ${PLUGIN_OUTPUT_DIR}
+    LIBRARY_OUTPUT_DIRECTORY_RELWITHDEBINFO ${PLUGIN_OUTPUT_DIR}
+    LIBRARY_OUTPUT_DIRECTORY_MINSIZEREL ${PLUGIN_OUTPUT_DIR}
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE ${PLUGIN_OUTPUT_DIR}
+    RUNTIME_OUTPUT_DIRECTORY_DEBUG ${PLUGIN_OUTPUT_DIR}
+    RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${PLUGIN_OUTPUT_DIR}
+    RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL ${PLUGIN_OUTPUT_DIR}
 )
 target_link_libraries(NadeCommon
     nade_crypto

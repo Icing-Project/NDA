@@ -257,6 +257,61 @@ void NadeExternalIO::workerThreadFunction() {
 
             std::cout << "[NadeExternalIO] Adding venv site-packages: " << sitePackagesStr << std::endl;
             path.attr("insert")(0, sitePackagesStr);
+
+#ifdef _WIN32
+            // CRITICAL: Add DLL directories for native Python packages like 'cryptography'
+            // When Python is embedded, DLL search paths differ from standalone Python.
+            // Without this, packages with Rust/C extensions fail with "DLL load failed".
+            try {
+                // Add site-packages and common DLL locations to DLL search path
+                // os.add_dll_directory() was added in Python 3.8
+                py::object add_dll_directory = os.attr("add_dll_directory");
+
+                // Add site-packages directory (where cryptography's DLLs might be)
+                add_dll_directory(site_packages);
+                std::cout << "[NadeExternalIO] Added DLL directory: " << sitePackagesStr << std::endl;
+
+                // Add cryptography's .libs directory (where bundled DLLs are typically stored)
+                py::object crypto_libs = path_join(site_packages, "cryptography.libs");
+                if (os.attr("path").attr("isdir")(crypto_libs).cast<bool>()) {
+                    add_dll_directory(crypto_libs);
+                    std::cout << "[NadeExternalIO] Added DLL directory: "
+                              << crypto_libs.cast<std::string>() << std::endl;
+                }
+
+                // Also try cryptography/hazmat/bindings
+                py::object crypto_bindings = path_join(site_packages, "cryptography", "hazmat", "bindings");
+                if (os.attr("path").attr("isdir")(crypto_bindings).cast<bool>()) {
+                    add_dll_directory(crypto_bindings);
+                }
+
+                // Add the venv's Scripts directory (may contain DLLs)
+                py::object scripts_dir = path_join(venvStr, "Scripts");
+                if (os.attr("path").attr("isdir")(scripts_dir).cast<bool>()) {
+                    add_dll_directory(scripts_dir);
+                }
+
+                // Add the base Python installation directory (NDA_PYTHON_HOME)
+                // This is where OpenSSL and other system DLLs might be located
+                const char* pythonHomeEnv = std::getenv("NDA_PYTHON_HOME");
+                if (pythonHomeEnv) {
+                    py::str pythonHomeStr(pythonHomeEnv);
+                    add_dll_directory(pythonHomeStr);
+                    std::cout << "[NadeExternalIO] Added DLL directory: " << pythonHomeEnv << std::endl;
+
+                    // Also add DLLs subdirectory if it exists
+                    py::object dlls_dir = path_join(pythonHomeStr, "DLLs");
+                    if (os.attr("path").attr("isdir")(dlls_dir).cast<bool>()) {
+                        add_dll_directory(dlls_dir);
+                        std::cout << "[NadeExternalIO] Added DLL directory: "
+                                  << dlls_dir.cast<std::string>() << std::endl;
+                    }
+                }
+
+            } catch (const std::exception& e) {
+                std::cout << "[NadeExternalIO] Warning: Could not add DLL directories: " << e.what() << std::endl;
+            }
+#endif
         } else {
             std::cout << "[NadeExternalIO] Warning: VIRTUAL_ENV not set, may not find nade-python" << std::endl;
         }
@@ -328,8 +383,45 @@ void NadeExternalIO::workerThreadFunction() {
         // Create adapter instance
         std::cout << "[NadeExternalIO] Creating NDAAdapter instance (sampleRate=" << ndaSampleRate_
                   << ", initiator=" << isInitiator_ << ", discovery=" << enableDiscovery_ << ")" << std::endl;
-        py::object adapter = NDAAdapterClass(
-            privKey, pubKey, remoteKey, ndaSampleRate_, "4fsk", isInitiator_, enableDiscovery_);
+
+        py::object adapter;
+        try {
+            adapter = NDAAdapterClass(
+                privKey, pubKey, remoteKey, ndaSampleRate_, "4fsk", isInitiator_, enableDiscovery_);
+        } catch (py::error_already_set& e) {
+            // pybind11 fetched the Python error into the exception object, clearing PyErr_Occurred()
+            // We need to restore it before we can print it
+            std::cerr << "[NadeExternalIO] NDAAdapter creation failed (Python exception)!" << std::endl;
+            try {
+                // Restore the Python error state so PyErr_Print can access it
+                e.restore();
+                PyErr_Print();
+                // Don't call PyErr_Clear() - PyErr_Print already clears it
+            } catch (...) {
+                std::cerr << "[NadeExternalIO] (could not print Python error)" << std::endl;
+            }
+            pythonInitialized_.store(false);
+            return;  // Exit worker thread gracefully
+        } catch (const std::exception& e) {
+            std::cerr << "[NadeExternalIO] NDAAdapter creation failed (C++ exception)!" << std::endl;
+            std::cerr << "[NadeExternalIO] Error: " << e.what() << std::endl;
+            pythonInitialized_.store(false);
+            return;
+        } catch (...) {
+            std::cerr << "[NadeExternalIO] NDAAdapter creation failed (unknown exception)!" << std::endl;
+            if (PyErr_Occurred()) {
+                PyErr_Print();
+            }
+            pythonInitialized_.store(false);
+            return;
+        }
+
+        if (!adapter || adapter.is_none()) {
+            std::cerr << "[NadeExternalIO] NDAAdapter creation returned None/null" << std::endl;
+            pythonInitialized_.store(false);
+            return;
+        }
+
         std::cout << "[NadeExternalIO] NDAAdapter created successfully" << std::endl;
 
         // Store for later access
@@ -446,34 +538,46 @@ void NadeExternalIO::workerThreadFunction() {
         ndaAdapter_ = nullptr;
         std::cout << "[NadeExternalIO] Cleanup complete" << std::endl;
 
-    } catch (py::error_already_set& e) {
+    } catch (const std::exception& e) {
+        // Catch C++ exceptions (including pybind11's error_already_set which inherits from std::runtime_error)
         std::cerr << "\n========================================" << std::endl;
-        std::cerr << "[NadeExternalIO] Python exception in worker thread" << std::endl;
-        std::cerr.flush();  // Force output before potential crash
+        std::cerr << "[NadeExternalIO] Exception in worker thread" << std::endl;
+        std::cerr.flush();
 
-        // Try to discard the error without accessing its details to avoid crashes
+        // Try to get the error message safely
         try {
-            e.discard_as_unraisable(__func__);
+            std::cerr << "[NadeExternalIO] Error: " << e.what() << std::endl;
         } catch (...) {
-            // Even discarding failed, just continue
+            std::cerr << "[NadeExternalIO] (could not retrieve error message)" << std::endl;
         }
 
-        std::cerr << "[NadeExternalIO] Python exception occurred (details unavailable to prevent crash)" << std::endl;
+        // Check if there's also a Python error set
+        if (PyErr_Occurred()) {
+            std::cerr << "[NadeExternalIO] Python error details:" << std::endl;
+            PyErr_Print();
+            PyErr_Clear();
+        }
+
         std::cerr << "[NadeExternalIO] Run manual test: python -c \"from nade.adapters.nda_adapter import NDAAdapter\"" << std::endl;
         std::cerr << "========================================\n" << std::endl;
         std::cerr.flush();
 
         pythonInitialized_.store(false);
-    } catch (const std::exception& e) {
-        std::cerr << "\n========================================" << std::endl;
-        std::cerr << "[NadeExternalIO] C++ exception in worker thread:" << std::endl;
-        std::cerr << "  What: " << e.what() << std::endl;
-        std::cerr << "========================================\n" << std::endl;
-        pythonInitialized_.store(false);
     } catch (...) {
         std::cerr << "\n========================================" << std::endl;
         std::cerr << "[NadeExternalIO] Unknown exception in worker thread" << std::endl;
+        std::cerr.flush();
+
+        // Check if there's a Python error set
+        if (PyErr_Occurred()) {
+            std::cerr << "[NadeExternalIO] Python error details:" << std::endl;
+            PyErr_Print();
+            PyErr_Clear();
+        }
+
         std::cerr << "========================================\n" << std::endl;
+        std::cerr.flush();
+
         pythonInitialized_.store(false);
     }
 #else

@@ -61,6 +61,18 @@ public:
                       << session_.getTelemetry().lastMessage << std::endl;
             return false;
         }
+
+        // CRITICAL: Query actual format from session after connect (may differ from requested)
+        int actualSampleRate = session_.sampleRate();
+        int actualChannels = session_.channels();
+        if (actualSampleRate != sampleRate_ || actualChannels != channels_) {
+            std::cerr << "[AIOCSink] WARNING: Format mismatch after connect!" << std::endl;
+            std::cerr << "[AIOCSink] Requested: " << sampleRate_ << "Hz, " << channels_ << "ch" << std::endl;
+            std::cerr << "[AIOCSink] Actual: " << actualSampleRate << "Hz, " << actualChannels << "ch" << std::endl;
+            sampleRate_ = actualSampleRate;
+            channels_ = actualChannels;
+        }
+
         if (!session_.start()) {
             state_ = PluginState::Error;
             return false;

@@ -27,6 +27,20 @@
 #include <queue>
 #include <functional>
 
+// Export/import macros for shared library
+// NadeCommon is built as a shared library so that all Nade plugins
+// (Encryptor, Decryptor, TextSource, TextSink) share the same singleton instance.
+// This prevents multiple Python interpreter initialization which would crash.
+#ifdef _WIN32
+    #ifdef NADE_COMMON_EXPORTS
+        #define NADE_API __declspec(dllexport)
+    #else
+        #define NADE_API __declspec(dllimport)
+    #endif
+#else
+    #define NADE_API __attribute__((visibility("default")))
+#endif
+
 namespace nade {
 
 /**
@@ -98,7 +112,7 @@ private:
  *   // Cleanup
  *   NadeExternalIO::destroyInstance();
  */
-class NadeExternalIO {
+class NADE_API NadeExternalIO {
 public:
     // =========================================================================
     // SINGLETON MANAGEMENT

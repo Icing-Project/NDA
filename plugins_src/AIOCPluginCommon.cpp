@@ -11,17 +11,12 @@
 #include <mmdeviceapi.h>
 #include <audioclient.h>
 #include <functiondiscoverykeys_devpkey.h>
-#include <avrt.h>
 #include <setupapi.h>
 #include <hidsdi.h>
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "avrt.lib")
 #pragma comment(lib, "setupapi.lib")
 #pragma comment(lib, "hid.lib")
-#endif
-
-#ifdef _WIN32
-#include <initguid.h>
 #endif
 
 namespace nda {
@@ -914,6 +909,9 @@ bool AIOCSession::initRenderClient()
     client->GetMixFormat(&mix);
     if (!mix) return false;
 
+    std::cerr << "[AIOCSession] Render device mix format: " << mix->nSamplesPerSec << "Hz, "
+              << mix->nChannels << "ch, " << mix->wBitsPerSample << "bit" << std::endl;
+
     WAVEFORMATEX original = *mix;
     mix->nSamplesPerSec = static_cast<DWORD>(sampleRate_);
     mix->nChannels = static_cast<WORD>(channels_);
@@ -923,8 +921,15 @@ bool AIOCSession::initRenderClient()
     REFERENCE_TIME hns = static_cast<REFERENCE_TIME>((10000000.0 * bufferFrames_) / sampleRate_);
     hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, hns, 0, mix, nullptr);
     if (FAILED(hr)) {
-        // Fallback to device mix format
+        std::cerr << "[AIOCSession] Requested format failed (hr=0x" << std::hex << hr << std::dec
+                  << "), falling back to device defaults" << std::endl;
         *mix = original;
+        // CRITICAL: Update session to match actual WASAPI format
+        sampleRate_ = mix->nSamplesPerSec;
+        channels_ = mix->nChannels;
+        std::cerr << "[AIOCSession] Using render format: " << sampleRate_ << "Hz, "
+                  << channels_ << "ch" << std::endl;
+        hns = static_cast<REFERENCE_TIME>((10000000.0 * bufferFrames_) / sampleRate_);
         hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, hns, 0, mix, nullptr);
     }
     CoTaskMemFree(mix);
@@ -994,6 +999,9 @@ bool AIOCSession::initCaptureClient()
     client->GetMixFormat(&mix);
     if (!mix) return false;
 
+    std::cerr << "[AIOCSession] Capture device mix format: " << mix->nSamplesPerSec << "Hz, "
+              << mix->nChannels << "ch, " << mix->wBitsPerSample << "bit" << std::endl;
+
     WAVEFORMATEX original = *mix;
     mix->nSamplesPerSec = static_cast<DWORD>(sampleRate_);
     mix->nChannels = static_cast<WORD>(channels_);
@@ -1003,7 +1011,15 @@ bool AIOCSession::initCaptureClient()
     REFERENCE_TIME hns = static_cast<REFERENCE_TIME>((10000000.0 * bufferFrames_) / sampleRate_);
     hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, hns, 0, mix, nullptr);
     if (FAILED(hr)) {
+        std::cerr << "[AIOCSession] Requested format failed (hr=0x" << std::hex << hr << std::dec
+                  << "), falling back to device defaults" << std::endl;
         *mix = original;
+        // CRITICAL: Update session to match actual WASAPI format
+        sampleRate_ = mix->nSamplesPerSec;
+        channels_ = mix->nChannels;
+        std::cerr << "[AIOCSession] Using capture format: " << sampleRate_ << "Hz, "
+                  << channels_ << "ch" << std::endl;
+        hns = static_cast<REFERENCE_TIME>((10000000.0 * bufferFrames_) / sampleRate_);
         hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, hns, 0, mix, nullptr);
     }
     CoTaskMemFree(mix);
