@@ -301,7 +301,7 @@ def verify_python_bundle(python_lib_dir: Path, package_dir: Path) -> Tuple[bool,
     messages.append("  ✓ site-packages directory exists")
 
     # Check for required packages
-    required_packages = ["numpy", "sounddevice", "soundcard"]
+    required_packages = ["pybind11", "numpy", "sounddevice", "soundcard"]
     found_packages = []
 
     for package in required_packages:
@@ -390,7 +390,7 @@ def main():
     # Copy site-packages
     print("=" * 70)
     if python_info['site_packages']:
-        required_packages = ["numpy", "sounddevice", "soundcard", "cffi", "_sounddevice"]
+        required_packages = ["pybind11", "numpy", "sounddevice", "soundcard", "cffi", "_sounddevice"]
         success, messages = copy_site_packages(
             python_info['site_packages'],
             site_packages_dst,
