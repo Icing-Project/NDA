@@ -87,6 +87,15 @@ void NadeEncryptorPlugin::stop() {
 // =============================================================================
 
 void NadeEncryptorPlugin::setParameter(const std::string& key, const std::string& value) {
+    if (key == "force_handshake" && nade_) {
+        bool isInitiator = (value == "initiator");
+        nade_->forceHandshake(isInitiator);
+        return;
+    }
+    if (key == "restart_discovery" && nade_) {
+        nade_->restartDiscovery();
+        return;
+    }
     // Configuration happens via onCryptoKeysReady(), not setParameter()
     (void)key;
     (void)value;
@@ -101,6 +110,9 @@ std::string NadeEncryptorPlugin::getParameter(const std::string& key) const {
     }
     if (key == "transmitting") {
         return (nade_ && nade_->isTransmitting()) ? "true" : "false";
+    }
+    if (key == "handshake_phase") {
+        return nade_ ? std::to_string(nade_->getHandshakePhase()) : "0";
     }
     // Diagnostic parameters (v3.0.1)
     if (key == "messages_processed") {

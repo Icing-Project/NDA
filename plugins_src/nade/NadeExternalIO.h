@@ -127,7 +127,8 @@ public:
         const std::vector<uint8_t>& localPublicKey,
         const std::vector<uint8_t>& remotePublicKey,
         int ndaSampleRate = 48000,
-        bool isInitiator = true
+        bool isInitiator = true,  // Deprecated (kept for compatibility)
+        bool enableDiscovery = true  // NEW: Auto-start discovery
     );
 
     /**
@@ -224,6 +225,23 @@ public:
     bool isSessionEstablished() const;
 
     /**
+     * @brief Get handshake phase for UI display.
+     * @return 0=Idle, 1=Discovering, 2=Handshaking, 3=Established
+     */
+    int getHandshakePhase() const;
+
+    /**
+     * @brief Force handshake with manual role selection (skip discovery).
+     * @param isInitiator true for initiator role, false for responder
+     */
+    void forceHandshake(bool isInitiator);
+
+    /**
+     * @brief Restart automatic discovery mode.
+     */
+    void restartDiscovery();
+
+    /**
      * @brief Get NDA sample rate.
      */
     int getSampleRate() const { return ndaSampleRate_; }
@@ -255,7 +273,8 @@ private:
         const std::vector<uint8_t>& localPub,
         const std::vector<uint8_t>& remotePub,
         int sampleRate,
-        bool isInitiator
+        bool isInitiator,
+        bool enableDiscovery
     );
 
     // Non-copyable, non-movable
@@ -276,6 +295,7 @@ private:
     // Configuration
     int ndaSampleRate_;
     bool isInitiator_;
+    bool enableDiscovery_;
     std::vector<uint8_t> localPrivateKey_;
     std::vector<uint8_t> localPublicKey_;
     std::vector<uint8_t> remotePublicKey_;
@@ -298,14 +318,15 @@ private:
     // State
     std::atomic<bool> isTransmitting_{false};
     std::atomic<bool> sessionEstablished_{false};
+    std::atomic<int> handshakePhase_{0};
 
     // Callbacks
     TransmitCompleteCallback transmitCompleteCallback_;
     MessageReceivedCallback messageReceivedCallback_;
     std::mutex callbackMutex_;
 
-    // Python state (only accessed from worker thread)
-    bool pythonInitialized_ = false;
+    // Python state (accessed from worker thread and potentially UI thread via forceHandshake/restartDiscovery)
+    std::atomic<bool> pythonInitialized_{false};
     void* ndaAdapter_ = nullptr;  // py::object* (opaque to avoid pybind11 header in public API)
 };
 

@@ -114,7 +114,8 @@ std::shared_ptr<NadeExternalIO> NadeExternalIO::createInstance(
     const std::vector<uint8_t>& localPublicKey,
     const std::vector<uint8_t>& remotePublicKey,
     int ndaSampleRate,
-    bool isInitiator)
+    bool isInitiator,
+    bool enableDiscovery)
 {
     std::lock_guard<std::mutex> lock(instanceMutex_);
 
@@ -126,7 +127,7 @@ std::shared_ptr<NadeExternalIO> NadeExternalIO::createInstance(
     // Create new instance
     instance_ = std::shared_ptr<NadeExternalIO>(
         new NadeExternalIO(localPrivateKey, localPublicKey, remotePublicKey,
-                          ndaSampleRate, isInitiator)
+                          ndaSampleRate, isInitiator, enableDiscovery)
     );
 
     return instance_;
@@ -154,9 +155,11 @@ NadeExternalIO::NadeExternalIO(
     const std::vector<uint8_t>& localPub,
     const std::vector<uint8_t>& remotePub,
     int sampleRate,
-    bool isInitiator)
+    bool isInitiator,
+    bool enableDiscovery)
     : ndaSampleRate_(sampleRate)
     , isInitiator_(isInitiator)
+    , enableDiscovery_(enableDiscovery)
     , localPrivateKey_(localPriv)
     , localPublicKey_(localPub)
     , remotePublicKey_(remotePub)
@@ -201,7 +204,7 @@ void NadeExternalIO::workerThreadFunction() {
     try {
         // Initialize Python interpreter
         py::scoped_interpreter guard{};
-        pythonInitialized_ = true;
+        pythonInitialized_.store(true);
 
         // Add Nade-Python to sys.path (sibling directory to NDA)
         // This allows importing the nade module without installing it
@@ -236,7 +239,7 @@ void NadeExternalIO::workerThreadFunction() {
 
         // Create adapter instance
         py::object adapter = NDAAdapterClass(
-            privKey, pubKey, remoteKey, ndaSampleRate_, "4fsk", isInitiator_);
+            privKey, pubKey, remoteKey, ndaSampleRate_, "4fsk", isInitiator_, enableDiscovery_);
 
         // Store for later access
         ndaAdapter_ = new py::object(adapter);
@@ -245,6 +248,9 @@ void NadeExternalIO::workerThreadFunction() {
 
         // Worker loop
         while (running_.load()) {
+            // Poll handshake phase for UI
+            int phase = adapter.attr("get_handshake_phase")().cast<int>();
+            handshakePhase_.store(phase, std::memory_order_relaxed);
             // Process TX: Generate FSK audio and fill pre-buffer
             if (txPreBuffer_->space() >= static_cast<size_t>(ndaSampleRate_ / 100)) {
                 // Generate ~10ms of audio
@@ -421,6 +427,59 @@ std::string NadeExternalIO::getMode() const {
 
 bool NadeExternalIO::isSessionEstablished() const {
     return sessionEstablished_.load();
+}
+
+int NadeExternalIO::getHandshakePhase() const {
+    return handshakePhase_.load(std::memory_order_relaxed);
+}
+
+void NadeExternalIO::forceHandshake(bool isInitiator) {
+#ifdef NDA_ENABLE_PYTHON
+    if (!ndaAdapter_ || !pythonInitialized_.load()) {
+        return;
+    }
+
+    try {
+        py::gil_scoped_acquire gil;
+        py::object* adapter = static_cast<py::object*>(ndaAdapter_);
+
+        // Get ForceHandshake event class
+        py::module_ events = py::module_::import("nade.protocol.events");
+        py::object ForceHandshakeClass = events.attr("ForceHandshake");
+
+        // Create event
+        std::string role = isInitiator ? "initiator" : "responder";
+        py::object event = ForceHandshakeClass(py::arg("role") = role);
+
+        // Feed to engine
+        py::object engine = adapter->attr("engine");
+        engine.attr("feed_event")(event);
+
+        std::cout << "[NadeExternalIO] Force handshake: " << role << std::endl;
+    } catch (const std::exception& e) {
+        std::cerr << "[NadeExternalIO] Force handshake error: " << e.what() << std::endl;
+    }
+#endif
+}
+
+void NadeExternalIO::restartDiscovery() {
+#ifdef NDA_ENABLE_PYTHON
+    if (!ndaAdapter_ || !pythonInitialized_.load()) {
+        return;
+    }
+
+    try {
+        py::gil_scoped_acquire gil;
+        py::object* adapter = static_cast<py::object*>(ndaAdapter_);
+
+        // Call public restart_discovery method on adapter
+        adapter->attr("restart_discovery")();
+
+        std::cout << "[NadeExternalIO] Restarted discovery" << std::endl;
+    } catch (const std::exception& e) {
+        std::cerr << "[NadeExternalIO] Restart discovery error: " << e.what() << std::endl;
+    }
+#endif
 }
 
 // =============================================================================

@@ -249,6 +249,10 @@ void UnifiedPipelineView::createTXPipelineRow(QVBoxLayout* layout)
     txHealthLabel_->setStyleSheet("font-weight: bold;");
     txDiagLayout->addRow("Health:", txHealthLabel_);
 
+    txHandshakeLabel_ = new QLabel("—", this);
+    txHandshakeLabel_->setObjectName("metricLabel");
+    txDiagLayout->addRow("Handshake:", txHandshakeLabel_);
+
     txDriftLabel_ = new QLabel("—", this);
     txDriftLabel_->setObjectName("metricLabel");
     txDiagLayout->addRow("Drift:", txDriftLabel_);
@@ -407,6 +411,10 @@ void UnifiedPipelineView::createRXPipelineRow(QVBoxLayout* layout)
     rxHealthLabel_->setObjectName("healthLabel");
     rxHealthLabel_->setStyleSheet("font-weight: bold;");
     rxDiagLayout->addRow("Health:", rxHealthLabel_);
+
+    rxHandshakeLabel_ = new QLabel("—", this);
+    rxHandshakeLabel_->setObjectName("metricLabel");
+    rxDiagLayout->addRow("Handshake:", rxHandshakeLabel_);
 
     rxDriftLabel_ = new QLabel("—", this);
     rxDriftLabel_->setObjectName("metricLabel");
@@ -982,7 +990,7 @@ void UnifiedPipelineView::onStartTXClicked()
               << " (ptr=" << txSink_.get() << ")" << std::endl;
 
     txPipeline_->setSource(txSource_);
-    if (txProcessor_) txPipeline_->setProcessor(txProcessor_);
+    txPipeline_->setProcessor(txProcessor_);  // Always call, even with nullptr to clear
     txPipeline_->setSink(txSink_);
 
     if (!txPipeline_->initialize()) {
@@ -1024,7 +1032,7 @@ void UnifiedPipelineView::onStartRXClicked()
     if (!rxPipeline_ || !rxSource_ || !rxSink_) return;
 
     rxPipeline_->setSource(rxSource_);
-    if (rxProcessor_) rxPipeline_->setProcessor(rxProcessor_);
+    rxPipeline_->setProcessor(rxProcessor_);  // Always call, even with nullptr to clear
     rxPipeline_->setSink(rxSink_);
 
     if (!rxPipeline_->initialize()) {
@@ -1143,7 +1151,7 @@ void UnifiedPipelineView::onStartBothClicked()
     // Start TX pipeline
     if (txPipeline_ && txSource_ && txSink_) {
         txPipeline_->setSource(txSource_);
-        if (txProcessor_) txPipeline_->setProcessor(txProcessor_);
+        txPipeline_->setProcessor(txProcessor_);  // Always call, even with nullptr to clear
         txPipeline_->setSink(txSink_);
 
         if (!txPipeline_->initialize()) {
@@ -1164,7 +1172,7 @@ void UnifiedPipelineView::onStartBothClicked()
     // Start RX pipeline
     if (rxPipeline_ && rxSource_ && rxSink_) {
         rxPipeline_->setSource(rxSource_);
-        if (rxProcessor_) rxPipeline_->setProcessor(rxProcessor_);
+        rxPipeline_->setProcessor(rxProcessor_);  // Always call, even with nullptr to clear
         rxPipeline_->setSink(rxSink_);
 
         if (!rxPipeline_->initialize()) {
@@ -1284,6 +1292,19 @@ void UnifiedPipelineView::updateMetrics()
                 txHealthLabel_->setStyleSheet("color: red; font-weight: bold;");
                 break;
         }
+
+        // Poll handshake status from processor (Nade plugin)
+        if (txProcessor_) {
+            std::string phaseStr = txProcessor_->getParameter("handshake_phase");
+            if (!phaseStr.empty()) {
+                try {
+                    int phase = std::stoi(phaseStr);
+                    updateHandshakeLabel(txHandshakeLabel_, phase);
+                } catch (const std::exception&) {
+                    // Invalid phase string, ignore
+                }
+            }
+        }
     } else {
         txLatencyLabel_->setText("--");
         txCPULabel_->setText("--");
@@ -1293,6 +1314,8 @@ void UnifiedPipelineView::updateMetrics()
         // v2.1: Reset diagnostics
         txHealthLabel_->setText("⚙️ Not running");
         txHealthLabel_->setStyleSheet("font-weight: bold;");
+        txHandshakeLabel_->setText("—");
+        txHandshakeLabel_->setStyleSheet("");
         txDriftLabel_->setText("—");
         txReadFailsLabel_->setText("—");
         txWriteFailsLabel_->setText("—");
@@ -1338,6 +1361,19 @@ void UnifiedPipelineView::updateMetrics()
                 rxHealthLabel_->setStyleSheet("color: red; font-weight: bold;");
                 break;
         }
+
+        // Poll handshake status from processor (Nade plugin)
+        if (rxProcessor_) {
+            std::string phaseStr = rxProcessor_->getParameter("handshake_phase");
+            if (!phaseStr.empty()) {
+                try {
+                    int phase = std::stoi(phaseStr);
+                    updateHandshakeLabel(rxHandshakeLabel_, phase);
+                } catch (const std::exception&) {
+                    // Invalid phase string, ignore
+                }
+            }
+        }
     } else {
         rxLatencyLabel_->setText("--");
         rxCPULabel_->setText("--");
@@ -1347,6 +1383,8 @@ void UnifiedPipelineView::updateMetrics()
         // v2.1: Reset diagnostics
         rxHealthLabel_->setText("⚙️ Not running");
         rxHealthLabel_->setStyleSheet("font-weight: bold;");
+        rxHandshakeLabel_->setText("—");
+        rxHandshakeLabel_->setStyleSheet("");
         rxDriftLabel_->setText("—");
         rxReadFailsLabel_->setText("—");
         rxWriteFailsLabel_->setText("—");
@@ -1669,6 +1707,63 @@ void UnifiedPipelineView::applyModernStyles()
             opacity: 0.5;
         }
     )");
+}
+
+// =============================================================================
+// Handshake Status Helpers
+// =============================================================================
+
+void UnifiedPipelineView::updateHandshakeLabel(QLabel* label, int phase)
+{
+    switch (phase) {
+        case 0:  // Idle
+            label->setText("⚪ Idle");
+            label->setStyleSheet("color: #94a3b8;");
+            break;
+        case 1:  // Discovering
+            label->setText("⏳ Discovering");
+            label->setStyleSheet("color: #fbbf24; font-weight: bold;");
+            break;
+        case 2:  // Handshaking
+            label->setText("🔄 Handshaking");
+            label->setStyleSheet("color: #3b82f6; font-weight: bold;");
+            break;
+        case 3:  // Established
+            label->setText("✓ Established");
+            label->setStyleSheet("color: #4ade80; font-weight: bold;");
+            break;
+        default:
+            label->setText("—");
+            label->setStyleSheet("");
+            break;
+    }
+}
+
+void UnifiedPipelineView::onManualOverride()
+{
+    // Not yet implemented - requires UI dialog for role selection
+    // Placeholder for future implementation
+}
+
+void UnifiedPipelineView::onRestartDiscovery()
+{
+    if (txProcessor_) {
+        txProcessor_->setParameter("restart_discovery", "true");
+    }
+    if (rxProcessor_) {
+        rxProcessor_->setParameter("restart_discovery", "true");
+    }
+}
+
+void UnifiedPipelineView::forceHandshake(bool isInitiator)
+{
+    std::string role = isInitiator ? "initiator" : "responder";
+    if (txProcessor_) {
+        txProcessor_->setParameter("force_handshake", role);
+    }
+    if (rxProcessor_) {
+        rxProcessor_->setParameter("force_handshake", role);
+    }
 }
 
 } // namespace nda
