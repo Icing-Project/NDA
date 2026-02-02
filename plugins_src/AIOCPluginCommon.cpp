@@ -11,17 +11,12 @@
 #include <mmdeviceapi.h>
 #include <audioclient.h>
 #include <functiondiscoverykeys_devpkey.h>
-#include <avrt.h>
 #include <setupapi.h>
 #include <hidsdi.h>
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "avrt.lib")
 #pragma comment(lib, "setupapi.lib")
 #pragma comment(lib, "hid.lib")
-#endif
-
-#ifdef _WIN32
-#include <initguid.h>
 #endif
 
 namespace nda {
@@ -873,8 +868,31 @@ bool AIOCSession::initRenderClient()
             hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &device);
         }
     } else {
-        std::cerr << "[AIOCSession] Opening DEFAULT render device (no device_id specified)" << std::endl;
-        hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &device);
+        // Auto-detect AIOC device when no device_id specified
+        std::cerr << "[AIOCSession] No device_id specified, searching for AIOC device..." << std::endl;
+        std::vector<WASAPIDeviceInfo> devices = enumerateWASAPIDevices(1); // 1 = eRender
+        std::string aiocDeviceId;
+        for (const auto& dev : devices) {
+            if (dev.friendlyName.find("AIOC") != std::string::npos) {
+                aiocDeviceId = dev.id;
+                std::cerr << "[AIOCSession] Found AIOC render device: " << dev.friendlyName << std::endl;
+                break;
+            }
+        }
+
+        if (!aiocDeviceId.empty()) {
+            std::wstring wid(aiocDeviceId.begin(), aiocDeviceId.end());
+            hr = enumerator->GetDevice(wid.c_str(), &device);
+            if (SUCCEEDED(hr)) {
+                std::cerr << "[AIOCSession] Successfully opened auto-detected AIOC device" << std::endl;
+            } else {
+                std::cerr << "[AIOCSession] Failed to open auto-detected AIOC device, using default" << std::endl;
+                hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &device);
+            }
+        } else {
+            std::cerr << "[AIOCSession] No AIOC device found, using system default" << std::endl;
+            hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &device);
+        }
     }
     enumerator->Release();
     if (FAILED(hr) || !device) {
@@ -891,6 +909,9 @@ bool AIOCSession::initRenderClient()
     client->GetMixFormat(&mix);
     if (!mix) return false;
 
+    std::cerr << "[AIOCSession] Render device mix format: " << mix->nSamplesPerSec << "Hz, "
+              << mix->nChannels << "ch, " << mix->wBitsPerSample << "bit" << std::endl;
+
     WAVEFORMATEX original = *mix;
     mix->nSamplesPerSec = static_cast<DWORD>(sampleRate_);
     mix->nChannels = static_cast<WORD>(channels_);
@@ -900,8 +921,15 @@ bool AIOCSession::initRenderClient()
     REFERENCE_TIME hns = static_cast<REFERENCE_TIME>((10000000.0 * bufferFrames_) / sampleRate_);
     hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, hns, 0, mix, nullptr);
     if (FAILED(hr)) {
-        // Fallback to device mix format
+        std::cerr << "[AIOCSession] Requested format failed (hr=0x" << std::hex << hr << std::dec
+                  << "), falling back to device defaults" << std::endl;
         *mix = original;
+        // CRITICAL: Update session to match actual WASAPI format
+        sampleRate_ = mix->nSamplesPerSec;
+        channels_ = mix->nChannels;
+        std::cerr << "[AIOCSession] Using render format: " << sampleRate_ << "Hz, "
+                  << channels_ << "ch" << std::endl;
+        hns = static_cast<REFERENCE_TIME>((10000000.0 * bufferFrames_) / sampleRate_);
         hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, hns, 0, mix, nullptr);
     }
     CoTaskMemFree(mix);
@@ -925,10 +953,39 @@ bool AIOCSession::initCaptureClient()
     if (FAILED(hr) || !enumerator) return false;
 
     if (!deviceInId_.empty()) {
+        std::cerr << "[AIOCSession] Opening capture device by ID: " << deviceInId_ << std::endl;
         std::wstring wid(deviceInId_.begin(), deviceInId_.end());
         hr = enumerator->GetDevice(wid.c_str(), &device);
+        if (FAILED(hr)) {
+            std::cerr << "[AIOCSession] Failed to open device by ID, falling back to default" << std::endl;
+            hr = enumerator->GetDefaultAudioEndpoint(eCapture, eConsole, &device);
+        }
     } else {
-        hr = enumerator->GetDefaultAudioEndpoint(eCapture, eConsole, &device);
+        // Auto-detect AIOC device when no device_id specified
+        std::cerr << "[AIOCSession] No device_id specified, searching for AIOC device..." << std::endl;
+        std::vector<WASAPIDeviceInfo> devices = enumerateWASAPIDevices(0); // 0 = eCapture
+        std::string aiocDeviceId;
+        for (const auto& dev : devices) {
+            if (dev.friendlyName.find("AIOC") != std::string::npos) {
+                aiocDeviceId = dev.id;
+                std::cerr << "[AIOCSession] Found AIOC capture device: " << dev.friendlyName << std::endl;
+                break;
+            }
+        }
+
+        if (!aiocDeviceId.empty()) {
+            std::wstring wid(aiocDeviceId.begin(), aiocDeviceId.end());
+            hr = enumerator->GetDevice(wid.c_str(), &device);
+            if (SUCCEEDED(hr)) {
+                std::cerr << "[AIOCSession] Successfully opened auto-detected AIOC device" << std::endl;
+            } else {
+                std::cerr << "[AIOCSession] Failed to open auto-detected AIOC device, using default" << std::endl;
+                hr = enumerator->GetDefaultAudioEndpoint(eCapture, eConsole, &device);
+            }
+        } else {
+            std::cerr << "[AIOCSession] No AIOC device found, using system default" << std::endl;
+            hr = enumerator->GetDefaultAudioEndpoint(eCapture, eConsole, &device);
+        }
     }
     enumerator->Release();
     if (FAILED(hr) || !device) return false;
@@ -942,6 +999,9 @@ bool AIOCSession::initCaptureClient()
     client->GetMixFormat(&mix);
     if (!mix) return false;
 
+    std::cerr << "[AIOCSession] Capture device mix format: " << mix->nSamplesPerSec << "Hz, "
+              << mix->nChannels << "ch, " << mix->wBitsPerSample << "bit" << std::endl;
+
     WAVEFORMATEX original = *mix;
     mix->nSamplesPerSec = static_cast<DWORD>(sampleRate_);
     mix->nChannels = static_cast<WORD>(channels_);
@@ -951,7 +1011,15 @@ bool AIOCSession::initCaptureClient()
     REFERENCE_TIME hns = static_cast<REFERENCE_TIME>((10000000.0 * bufferFrames_) / sampleRate_);
     hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, hns, 0, mix, nullptr);
     if (FAILED(hr)) {
+        std::cerr << "[AIOCSession] Requested format failed (hr=0x" << std::hex << hr << std::dec
+                  << "), falling back to device defaults" << std::endl;
         *mix = original;
+        // CRITICAL: Update session to match actual WASAPI format
+        sampleRate_ = mix->nSamplesPerSec;
+        channels_ = mix->nChannels;
+        std::cerr << "[AIOCSession] Using capture format: " << sampleRate_ << "Hz, "
+                  << channels_ << "ch" << std::endl;
+        hns = static_cast<REFERENCE_TIME>((10000000.0 * bufferFrames_) / sampleRate_);
         hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, hns, 0, mix, nullptr);
     }
     CoTaskMemFree(mix);

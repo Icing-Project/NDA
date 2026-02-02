@@ -465,7 +465,7 @@ bool ProcessingPipeline::initialize()
         std::cerr << "[Pipeline] Error: Source and sink are required" << std::endl;
         return false;
     }
-    
+
     // Initialize source
     auto sourceState = source_->getState();
     std::cout << "[Pipeline] Source: " << source_->getInfo().name
@@ -627,7 +627,7 @@ bool ProcessingPipeline::initialize()
     }
 
     frameCount_ = negotiatedFrames;
-    
+
     // Configure processor for pipeline's internal sample rate
     if (processor_) {
         processor_->setSampleRate(targetSampleRate_);
@@ -701,7 +701,7 @@ bool ProcessingPipeline::start()
 #endif
         return false;
     }
-    
+
     if (processor_ && !processor_->start()) {
         std::cerr << "[Pipeline] Processor start failed" << std::endl;
         source_->stop();  // Rollback
@@ -710,7 +710,7 @@ bool ProcessingPipeline::start()
 #endif
         return false;
     }
-    
+
     if (!sink_->start()) {
         std::cerr << "[Pipeline] Sink start failed" << std::endl;
         if (processor_) processor_->stop();
@@ -760,12 +760,12 @@ void ProcessingPipeline::stop()
     if (sink_) {
         sink_->stop();
     }
-    
+
     // Stop source to unblock any pending read() calls
     if (source_) {
         source_->stop();
     }
-    
+
     // Stop processor
     if (processor_) {
         processor_->stop();
@@ -867,17 +867,17 @@ float ProcessingPipeline::getCPULoad() const
 float ProcessingPipeline::getActualCPULoad() const
 {
     if (!isRunning_) return 0.0f;
-    
+
     auto now = std::chrono::steady_clock::now();
     auto wallTime = std::chrono::duration_cast<std::chrono::milliseconds>(
         now - startTime_
     ).count();
-    
+
     // Calculate audio time processed
     auto audioTime = (processedSamples_ * 1000) / targetSampleRate_;
-    
+
     if (wallTime == 0) return 0.0f;
-    
+
     // CPU% approximation: (audio time / wall time) * 100
     // Note: This is pipeline thread efficiency, not system CPU
     return (static_cast<float>(audioTime) / wallTime) * 100.0f;
@@ -886,24 +886,24 @@ float ProcessingPipeline::getActualCPULoad() const
 double ProcessingPipeline::getActualLatency() const
 {
     double latency = 0.0;
-    
+
     // Source buffer time
     if (source_) {
         latency += (double)workBuffer_.getFrameCount() / targetSampleRate_;
     }
-    
+
     // Processor latency (if declared)
     if (processor_ && processor_->getState() == PluginState::Running) {
         latency += processor_->getProcessingLatency();
     }
-    
+
     // Sink buffer time
     if (sink_) {
         int sinkBufferSize = sink_->getBufferSize();
         int sinkRate = sink_->getSampleRate();
         latency += (double)sinkBufferSize / sinkRate;
     }
-    
+
     return latency;  // Returns seconds
 }
 
@@ -922,29 +922,29 @@ void ProcessingPipeline::getPeakLevels(float& left, float& right) const
 double ProcessingPipeline::getUptime() const
 {
     if (!isRunning_) return 0.0;
-    
+
     auto now = std::chrono::steady_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
         now - startTime_
     );
-    
+
     return duration.count() / 1000.0;  // Convert to seconds
 }
 
 double ProcessingPipeline::getRealTimeRatio() const
 {
     if (!isRunning_ || processedSamples_ == 0) return 0.0;
-    
+
     auto now = std::chrono::steady_clock::now();
     auto wallTime = std::chrono::duration_cast<std::chrono::microseconds>(
         now - startTime_
     ).count();
-    
+
     if (wallTime == 0) return 0.0;
-    
+
     // Calculate audio time processed (in microseconds)
     auto audioTime = (processedSamples_ * 1000000) / targetSampleRate_;
-    
+
     // Real-time ratio: audio time / wall time
     // 1.0 = perfect real-time, <1.0 = slower than real-time, >1.0 = faster
     return static_cast<double>(audioTime) / wallTime;
@@ -1143,7 +1143,7 @@ void ProcessingPipeline::processingThread()
 
         // Log progress every second
         auto now = std::chrono::steady_clock::now();
-        if (frameCount % 100 == 0) {  // ~100 frames = ~1 second at 512 samples/frame
+        if (frameCount % 1000 == 0) {  // ~100 frames = ~1 second at 512 samples/frame
             auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - startTime_).count();
             double audioSeconds = (double)processedSamples_ / targetSampleRate_;
             std::cout << "[Pipeline] Running for " << elapsed << "s, processed "

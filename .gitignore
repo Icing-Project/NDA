@@ -1,5 +1,6 @@
 .specstory/
 .pyuser/
+.claude/
 
 # Build directories
 build/

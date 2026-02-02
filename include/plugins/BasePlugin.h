@@ -8,6 +8,9 @@
 
 #define NDA_PLUGIN_API_VERSION 1
 
+// Forward declaration for Qt GUI support
+class QWidget;
+
 namespace nda {
 
 struct PluginInfo {
@@ -39,6 +42,12 @@ public:
 
     // State
     virtual PluginState getState() const = 0;
+
+    /**
+     * @brief Create dockable GUI widget for this plugin.
+     * @return QWidget* to be placed in QDockWidget, or nullptr if no GUI
+     */
+    virtual QWidget* createDockableGui() { return nullptr; }
 };
 
 } // namespace nda

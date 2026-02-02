@@ -65,6 +65,8 @@ void MainWindow::setupUI()
             this, &MainWindow::onRXPipelineStarted);
     connect(unifiedView_, &nda::UnifiedPipelineView::rxPipelineStopped,
             this, &MainWindow::onRXPipelineStopped);
+    connect(unifiedView_, &nda::UnifiedPipelineView::pluginSelected,
+            this, &MainWindow::onPluginSelected);
 }
 
 void MainWindow::createMenus()
@@ -198,6 +200,9 @@ void MainWindow::autoLoadPlugins()
     if (unifiedView_) {
         unifiedView_->refreshPluginLists();
     }
+
+    // Create plugin docks
+    createPluginDocks();
 }
 
 // v2.1: Soak test support methods
@@ -538,5 +543,109 @@ bool MainWindow::applyKeyToSelectedPlugin(const std::string& paramName, const st
             QString::fromStdString(paramName) + "\n\n"
             "This key can still be manually copied and pasted into compatible plugins.");
         return false;
+    }
+}
+
+void MainWindow::createPluginDocks() {
+    auto plugins = pluginManager_->getAllPlugins();
+
+    // Track text plugin docks for proper stacking order
+    QDockWidget* textSourceDock = nullptr;
+    QDockWidget* textSinkDock = nullptr;
+
+    // First pass: create all docks
+    for (const auto& loadedPlugin : plugins) {
+        if (!loadedPlugin.instance) continue;
+
+        QWidget* gui = loadedPlugin.instance->createDockableGui();
+        if (!gui) continue;
+
+        QString pluginName = QString::fromStdString(loadedPlugin.info.name);
+
+        // Create dock widget
+        QDockWidget* dock = new QDockWidget(pluginName, this);
+        dock->setWidget(gui);
+        dock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea | Qt::BottomDockWidgetArea);
+
+        // Add to main window (default: right side)
+        addDockWidget(Qt::RightDockWidgetArea, dock);
+
+        // Hide by default - only show when plugin is in active pipeline
+        dock->hide();
+
+        // Store reference
+        pluginDocks_[pluginName] = dock;
+
+        // Track text plugin docks for stacking
+        if (pluginName.contains("Text Source", Qt::CaseInsensitive)) {
+            textSourceDock = dock;
+        } else if (pluginName.contains("Text Sink", Qt::CaseInsensitive)) {
+            textSinkDock = dock;
+        }
+    }
+
+    // Second pass: Set up vertical stacking for text plugins
+    // Split so text input (source) is on top, text output (sink) on bottom
+    if (textSourceDock && textSinkDock) {
+        // splitDockWidget(existing, new, orientation) places new BELOW existing for Qt::Vertical
+        // So we need: splitDockWidget(source, sink, Vertical) to put sink below source
+        splitDockWidget(textSourceDock, textSinkDock, Qt::Vertical);
+
+        // Set minimum heights so both are visible
+        textSourceDock->setMinimumHeight(200);
+        textSinkDock->setMinimumHeight(200);
+
+        std::cout << "[MainWindow] Text docks split vertically: source on top, sink on bottom" << std::endl;
+    }
+
+    // Update View menu
+    updatePluginDocksMenu();
+}
+
+void MainWindow::updatePluginDocksMenu() {
+    // Find or create "View" menu
+    QMenu* viewMenu = nullptr;
+    for (QAction* action : menuBar()->actions()) {
+        if (action->text() == tr("&View")) {
+            viewMenu = action->menu();
+            break;
+        }
+    }
+
+    if (!viewMenu) {
+        viewMenu = menuBar()->addMenu(tr("&View"));
+    }
+
+    // Add separator before plugin docks
+    viewMenu->addSeparator();
+
+    // Add toggle actions for each dock
+    for (auto it = pluginDocks_.constBegin(); it != pluginDocks_.constEnd(); ++it) {
+        QAction* toggleAction = viewMenu->addAction(it.key());
+        toggleAction->setCheckable(true);
+        toggleAction->setChecked(it.value()->isVisible());
+
+        connect(toggleAction, &QAction::toggled, this, [this, pluginName = it.key()](bool visible) {
+            if (pluginDocks_.contains(pluginName)) {
+                pluginDocks_[pluginName]->setVisible(visible);
+            }
+        });
+
+        // Sync action state when dock visibility changes
+        connect(it.value(), &QDockWidget::visibilityChanged, toggleAction, &QAction::setChecked);
+    }
+}
+
+void MainWindow::onPluginSelected(const QString& pluginName, bool selected) {
+    if (!pluginDocks_.contains(pluginName)) {
+        return;
+    }
+
+    QDockWidget* dock = pluginDocks_[pluginName];
+    if (selected) {
+        dock->show();
+        dock->raise();  // Bring to front
+    } else {
+        dock->hide();
     }
 }

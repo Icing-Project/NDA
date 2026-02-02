@@ -6,6 +6,17 @@
 #include <string>
 #include <vector>
 
+// Platform-specific export/import macros
+#ifdef _WIN32
+    #ifdef NADE_CRYPTO_EXPORTS
+        #define NADE_CRYPTO_API __declspec(dllexport)
+    #else
+        #define NADE_CRYPTO_API __declspec(dllimport)
+    #endif
+#else
+    #define NADE_CRYPTO_API __attribute__((visibility("default")))
+#endif
+
 // Forward declarations for OpenSSL types
 typedef struct evp_pkey_st EVP_PKEY;
 
@@ -23,7 +34,7 @@ namespace nda {
  *
  * @thread-safety All methods are thread-safe (mutex-protected)
  */
-class CryptoManager {
+class NADE_CRYPTO_API CryptoManager {
 public:
     /**
      * @brief Get singleton instance
@@ -114,6 +125,24 @@ public:
      * @return Hex-encoded peer public key (64 chars) or empty if not set
      */
     std::string exportX25519PeerPublicKey() const;
+
+    /**
+     * @brief Export local X25519 private key as raw bytes (for plugins)
+     * @return Raw private key (32 bytes) or empty vector if not set
+     */
+    std::vector<uint8_t> exportX25519PrivateKeyBytes() const;
+
+    /**
+     * @brief Export local X25519 public key as raw bytes (for plugins)
+     * @return Raw public key (32 bytes) or empty vector if not set
+     */
+    std::vector<uint8_t> exportX25519PublicKeyBytes() const;
+
+    /**
+     * @brief Export peer's X25519 public key as raw bytes (for plugins)
+     * @return Raw peer public key (32 bytes) or empty vector if not set
+     */
+    std::vector<uint8_t> exportX25519PeerPublicKeyBytes() const;
 
     /**
      * @brief Check if X25519 key pair is loaded

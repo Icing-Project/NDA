@@ -52,6 +52,7 @@ signals:
     void txPipelineStopped();
     void rxPipelineStarted();
     void rxPipelineStopped();
+    void pluginSelected(const QString& pluginName, bool selected);
 
 private slots:
     // TX pipeline
@@ -115,6 +116,12 @@ private:
     QPushButton* createConfigButton();
     void updateConfigButtonStates();
 
+    // Handshake status helpers
+    void updateHandshakeLabel(QLabel* label, int phase);
+    void onManualOverride();
+    void onRestartDiscovery();
+    void forceHandshake(bool isInitiator);
+
     // Plugin manager
     std::shared_ptr<PluginManager> pluginManager_;
     
@@ -137,6 +144,7 @@ private:
 
     // TX diagnostics (v2.1)
     QLabel *txHealthLabel_;
+    QLabel *txHandshakeLabel_;  // Handshake status (discovery/handshaking/established)
     QLabel *txDriftLabel_;
     QLabel *txReadFailsLabel_;
     QLabel *txWriteFailsLabel_;
@@ -155,6 +163,7 @@ private:
 
     // RX diagnostics (v2.1)
     QLabel *rxHealthLabel_;
+    QLabel *rxHandshakeLabel_;  // Handshake status (discovery/handshaking/established)
     QLabel *rxDriftLabel_;
     QLabel *rxReadFailsLabel_;
     QLabel *rxWriteFailsLabel_;
