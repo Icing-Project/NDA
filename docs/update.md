@@ -1,5 +1,33 @@
 # Update Log
 
+## 2026-02-03: Fix missing libnade_crypto.dll in CI
+
+### Problem
+The Windows release was crashing when clicking the "Generate AES-256 Key" or "Generate X25519 Key Pair" buttons in the Crypto menu. The `libnade_crypto.dll` (containing `CryptoManager`) was not included in the Windows release package.
+
+### Symptom
+- Application starts normally
+- Clicking "Crypto → Generate AES-256 Key" causes immediate crash
+- The crash occurs because `CryptoManager::generateAES256Key()` tries to access code in the missing DLL
+
+### Fix
+Updated `.github/workflows/release.yml` to copy `libnade_crypto.dll` from the build directory to the package bin folder alongside `NDA.exe`:
+```yaml
+# Copy nade_crypto shared library (required by NDA.exe and plugins)
+cp build-mingw/libnade_crypto.dll "$DEPLOY_DIR/bin/"
+```
+
+### Root cause
+The CMakeLists.txt defines `nade_crypto` as a SHARED library (lines 94-118) which NDA.exe and several plugins depend on. However, the deploy step in the CI only copied:
+- The main executable (`NDA.exe`)
+- Runtime DLLs from MinGW (Qt6, OpenSSL, etc.)
+- Plugin DLLs from `build-mingw/plugins/`
+
+The `libnade_crypto.dll` is built in the root build directory, not the plugins directory, so it was missed.
+
+### Action Required
+**A new CI build is required.** Existing packages in `packages/windows/` were created before this fix. Push to main or create a new tag to trigger a release build that includes the DLL.
+
 ## 2026-01-30: Fix YAML syntax in CI workflow
 Fixed heredoc syntax that broke YAML parsing - replaced with printf command.
 
