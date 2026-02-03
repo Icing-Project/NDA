@@ -76,6 +76,9 @@ jobs:
           # Copy executable
           cp build-mingw/NDA.exe "$DEPLOY_DIR/bin/"
 
+          # Copy nade_crypto shared library (required by NDA.exe and plugins)
+          cp build-mingw/libnade_crypto.dll "$DEPLOY_DIR/bin/"
+
           # Debug: show what's in MINGW_ROOT
           echo "=== Contents of MINGW_ROOT/bin ==="
           ls "$MINGW_ROOT/bin/" | head -50
