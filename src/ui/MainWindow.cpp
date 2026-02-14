@@ -2,6 +2,7 @@
 #include "ui/UnifiedPipelineView.h"
 #include "ui/ImportKeysDialog.h"
 #include "ui/ExportKeysDialog.h"
+#include "ui/AboutDialog.h"
 #include "plugins/PluginPaths.h"
 #include "crypto/CryptoManager.h"
 #include <QAction>
@@ -27,7 +28,8 @@
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
-    setWindowTitle("NDA v2.0 - Real-Time Audio Encryption Bridge");
+    setWindowTitle(QString("NDA v%1 - Real-Time Audio Encryption Bridge")
+                       .arg(QCoreApplication::applicationVersion()));
     setMinimumSize(1200, 800);
 
     // Create core components
@@ -116,6 +118,7 @@ void MainWindow::createMenus()
 
     QMenu *helpMenu = menuBar()->addMenu("&Help");
     QAction *aboutAction = new QAction("&About", this);
+    connect(aboutAction, &QAction::triggered, this, &MainWindow::onShowAbout);
     helpMenu->addAction(aboutAction);
 }
 
@@ -142,6 +145,12 @@ void MainWindow::onRXPipelineStarted()
 void MainWindow::onRXPipelineStopped()
 {
     statusBar()->showMessage("RX Pipeline Stopped");
+}
+
+void MainWindow::onShowAbout()
+{
+    AboutDialog dialog(pluginManager_, txPipeline_, rxPipeline_, this);
+    dialog.exec();
 }
 
 // v2.2: Removed dead onStatusUpdate slot

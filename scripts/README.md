@@ -176,6 +176,17 @@ scripts/build_ubuntu.sh
 scripts/dev_ubuntu.sh
 ```
 
+### Ubuntu Standalone Release Bundle (Self-Contained Folder + tar.gz)
+
+```bash
+# Builds (Release) and creates: packages/NDA-v<version>-ubuntu<ver>-<arch>.tar.gz
+python3 scripts/package_ubuntu_release.py
+```
+
+Notes:
+- The bundle includes the NDA binary, C++ plugins, Qt plugins, and most shared library deps (via `ldd`).
+- For maximum cross-Ubuntu compatibility, build on the oldest Ubuntu version you intend to support.
+
 See `docs/guides/installation.md` for detailed Linux instructions.
 
 ## Manual CMake Configuration
