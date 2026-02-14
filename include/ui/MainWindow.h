@@ -38,6 +38,7 @@ private slots:
     void onTXPipelineStopped();
     void onRXPipelineStarted();
     void onRXPipelineStopped();
+    void onShowAbout();
     // v2.2: Removed dead onStatusUpdate slot
 
     // Crypto menu slots

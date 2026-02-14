@@ -247,6 +247,7 @@ set(SOURCES
     src/ui/MainWindow.cpp
     src/ui/UnifiedPipelineView.cpp
     src/ui/PluginSidebar.cpp
+    src/ui/AboutDialog.cpp
     src/ui/ImportKeysDialog.cpp
     src/ui/ExportKeysDialog.cpp
     # v2.2: Removed dead UI views (AudioDevicesView, EncryptionView, PluginsView, SettingsView)
@@ -279,6 +280,7 @@ set(HEADERS
     include/ui/MainWindow.h
     include/ui/UnifiedPipelineView.h
     include/ui/PluginSidebar.h
+    include/ui/AboutDialog.h
     include/ui/ImportKeysDialog.h
     include/ui/ExportKeysDialog.h
     # v2.2: Removed dead UI views (see SOURCES comment)
