@@ -1,10 +1,12 @@
 /**
- * AES-256-GCM Encryptor Processor Plugin
- * 
- * Production-grade symmetric encryption using OpenSSL EVP API.
- * Uses AES-256 in GCM mode with authentication.
- * 
- * WARNING: Key exchange is out of scope. Keys must be shared out-of-band.
+ * AES-256-CTR Encryptor Processor Plugin
+ *
+ * Symmetric encryption using OpenSSL EVP API with AES-256 in CTR mode.
+ * Uses a deterministic frame counter for the IV so that the matching
+ * decryptor can reproduce it without out-of-band nonce transmission.
+ *
+ * WARNING: Key exchange is out of scope. Keys must be shared out-of-band
+ * or via the NDA Crypto menu (Generate AES Key -> Apply to Pipeline).
  */
 
 #include "plugins/AudioProcessorPlugin.h"
@@ -21,202 +23,178 @@ class AES256EncryptorPlugin : public AudioProcessorPlugin {
 private:
     EVP_CIPHER_CTX* ctx_;
     std::vector<uint8_t> key_;     // 256-bit encryption key
-    std::vector<uint8_t> nonce_;   // 96-bit nonce (GCM)
     int sampleRate_;
     int channels_;
     PluginState state_;
-    uint64_t framesEncrypted_;
-    
+    uint64_t frameCounter_;        // Deterministic IV counter
+
 public:
     AES256EncryptorPlugin()
         : ctx_(nullptr)
-        , key_(32, 0)   // 256 bits
-        , nonce_(12, 0) // 96 bits for GCM
+        , key_(32, 0)
         , sampleRate_(48000)
         , channels_(2)
         , state_(PluginState::Unloaded)
-        , framesEncrypted_(0)
+        , frameCounter_(0)
     {
         ctx_ = EVP_CIPHER_CTX_new();
     }
-    
+
     ~AES256EncryptorPlugin() {
         if (ctx_) {
             EVP_CIPHER_CTX_free(ctx_);
             ctx_ = nullptr;
         }
     }
-    
+
     bool initialize() override {
         if (!ctx_) {
             std::cerr << "[AES256Encryptor] Failed to create cipher context" << std::endl;
             state_ = PluginState::Error;
             return false;
         }
-        
-        // Generate random key (in production, load from secure storage)
-        if (RAND_bytes(key_.data(), key_.size()) != 1) {
+
+        // Generate random key (can be overridden via setParameter or Crypto menu)
+        if (RAND_bytes(key_.data(), static_cast<int>(key_.size())) != 1) {
             std::cerr << "[AES256Encryptor] Failed to generate random key" << std::endl;
             state_ = PluginState::Error;
             return false;
         }
-        
+
         state_ = PluginState::Initialized;
-        std::cout << "[AES256Encryptor] Initialized with " << (key_.size() * 8) 
+        std::cout << "[AES256Encryptor] Initialized with " << (key_.size() * 8)
                   << "-bit key" << std::endl;
-        std::cout << "[AES256Encryptor] WARNING: Key exchange is out-of-band" << std::endl;
         return true;
     }
-    
+
     bool start() override {
         if (state_ != PluginState::Initialized) {
             return false;
         }
         state_ = PluginState::Running;
-        framesEncrypted_ = 0;
+        frameCounter_ = 0;
         std::cout << "[AES256Encryptor] Started" << std::endl;
         return true;
     }
-    
+
     void stop() override {
         if (state_ == PluginState::Running) {
             state_ = PluginState::Initialized;
-            double seconds = (double)framesEncrypted_ / sampleRate_;
-            std::cout << "[AES256Encryptor] Stopped after encrypting " 
-                      << framesEncrypted_ << " frames (" << seconds << "s)" << std::endl;
+            std::cout << "[AES256Encryptor] Stopped after " << frameCounter_ << " frames" << std::endl;
         }
     }
-    
+
     void shutdown() override {
         state_ = PluginState::Unloaded;
         key_.assign(32, 0);  // Clear key from memory
         std::cout << "[AES256Encryptor] Shutdown" << std::endl;
     }
-    
+
     bool processAudio(AudioBuffer& buffer) override {
         if (state_ != PluginState::Running || !ctx_) {
             return false;
         }
-        
-        try {
-            // Generate unique nonce for this buffer (GCM requirement)
-            if (RAND_bytes(nonce_.data(), nonce_.size()) != 1) {
-                std::cerr << "[AES256Encryptor] Nonce generation failed" << std::endl;
-                return false;
+
+        // Build deterministic 16-byte IV from frame counter
+        // IV = 8 zero bytes + 8-byte big-endian counter
+        uint8_t iv[16] = {0};
+        uint64_t counter = frameCounter_;
+        for (int i = 15; i >= 8; --i) {
+            iv[i] = static_cast<uint8_t>(counter & 0xFF);
+            counter >>= 8;
+        }
+
+        // Convert float audio to bytes (interleaved layout)
+        size_t totalSamples = static_cast<size_t>(buffer.getFrameCount()) * buffer.getChannelCount();
+        size_t dataSize = totalSamples * sizeof(float);
+        std::vector<uint8_t> plaintext(dataSize);
+
+        float* floatPtr = reinterpret_cast<float*>(plaintext.data());
+        for (int f = 0; f < buffer.getFrameCount(); ++f) {
+            for (int ch = 0; ch < buffer.getChannelCount(); ++ch) {
+                *floatPtr++ = buffer.getChannelData(ch)[f];
             }
-            
-            // Convert float audio to bytes (interleaved)
-            size_t totalSamples = buffer.getFrameCount() * buffer.getChannelCount();
-            std::vector<uint8_t> plaintext(totalSamples * sizeof(float));
-            
-            float* floatPtr = reinterpret_cast<float*>(plaintext.data());
-            for (int f = 0; f < buffer.getFrameCount(); ++f) {
-                for (int ch = 0; ch < buffer.getChannelCount(); ++ch) {
-                    *floatPtr++ = buffer.getChannelData(ch)[f];
-                }
-            }
-            
-            // Encrypt using AES-256-GCM
-            std::vector<uint8_t> ciphertext(plaintext.size() + 16);  // +16 for auth tag
-            int len;
-            int ciphertext_len;
-            
-            if (EVP_EncryptInit_ex(ctx_, EVP_aes_256_gcm(), nullptr, 
-                                  key_.data(), nonce_.data()) != 1) {
-                std::cerr << "[AES256Encryptor] Encrypt init failed" << std::endl;
-                return false;
-            }
-            
-            if (EVP_EncryptUpdate(ctx_, ciphertext.data(), &len, 
-                                 plaintext.data(), plaintext.size()) != 1) {
-                std::cerr << "[AES256Encryptor] Encrypt update failed" << std::endl;
-                return false;
-            }
-            ciphertext_len = len;
-            
-            if (EVP_EncryptFinal_ex(ctx_, ciphertext.data() + len, &len) != 1) {
-                std::cerr << "[AES256Encryptor] Encrypt final failed" << std::endl;
-                return false;
-            }
-            ciphertext_len += len;
-            
-            // Get authentication tag (GCM)
-            if (EVP_CIPHER_CTX_ctrl(ctx_, EVP_CTRL_GCM_GET_TAG, 16, 
-                                   ciphertext.data() + ciphertext_len) != 1) {
-                std::cerr << "[AES256Encryptor] Failed to get auth tag" << std::endl;
-                return false;
-            }
-            
-            // Convert encrypted bytes back to float buffer (reinterpret as floats)
-            // NOTE: This is for demonstration. In production, handle size increase properly.
-            floatPtr = reinterpret_cast<float*>(ciphertext.data());
-            for (int f = 0; f < buffer.getFrameCount(); ++f) {
-                for (int ch = 0; ch < buffer.getChannelCount(); ++ch) {
-                    buffer.getChannelData(ch)[f] = *floatPtr++;
-                }
-            }
-            
-            framesEncrypted_ += buffer.getFrameCount();
-            return true;
-            
-        } catch (const std::exception& e) {
-            std::cerr << "[AES256Encryptor] Exception: " << e.what() << std::endl;
+        }
+
+        // Encrypt with AES-256-CTR (ciphertext size == plaintext size)
+        std::vector<uint8_t> ciphertext(dataSize);
+        int len = 0;
+
+        if (EVP_EncryptInit_ex(ctx_, EVP_aes_256_ctr(), nullptr,
+                               key_.data(), iv) != 1) {
+            std::cerr << "[AES256Encryptor] Encrypt init failed" << std::endl;
             return false;
         }
+
+        if (EVP_EncryptUpdate(ctx_, ciphertext.data(), &len,
+                              plaintext.data(), static_cast<int>(dataSize)) != 1) {
+            std::cerr << "[AES256Encryptor] Encrypt update failed" << std::endl;
+            return false;
+        }
+
+        // Write encrypted bytes back as floats
+        floatPtr = reinterpret_cast<float*>(ciphertext.data());
+        for (int f = 0; f < buffer.getFrameCount(); ++f) {
+            for (int ch = 0; ch < buffer.getChannelCount(); ++ch) {
+                buffer.getChannelData(ch)[f] = *floatPtr++;
+            }
+        }
+
+        frameCounter_++;
+        return true;
     }
-    
+
     PluginInfo getInfo() const override {
         PluginInfo info;
-        info.name = "AES-256-GCM Encryptor";
-        info.version = "1.0.0";
+        info.name = "AES-256-CTR Encryptor";
+        info.version = "2.0.0";
         info.author = "NDA Team";
-        info.description = "AES-256-GCM audio encryption with OpenSSL";
+        info.description = "AES-256-CTR audio encryption with deterministic counter IV";
         info.type = PluginType::Processor;
         info.apiVersion = 1;
         return info;
     }
-    
+
+    PluginType getType() const override {
+        return PluginType::Processor;
+    }
+
     PluginState getState() const override {
         return state_;
     }
-    
+
     int getSampleRate() const override {
         return sampleRate_;
     }
-    
+
     int getChannelCount() const override {
         return channels_;
     }
-    
+
     void setSampleRate(int rate) override {
         sampleRate_ = rate;
     }
-    
+
     void setChannelCount(int channels) override {
         channels_ = channels;
     }
-    
-    bool setParameter(const std::string& key, const std::string& value) override {
-        if (key == "key") {
-            // Set encryption key from hex string
-            // TODO: Implement hex parsing for production
+
+    void setParameter(const std::string& key, const std::string& value) override {
+        if (key == "key" || key == "aes_256_key") {
             if (value.length() == 64) {  // 32 bytes = 64 hex chars
-                // Simple hex parsing (production would validate)
-                for (size_t i = 0; i < 32 && i*2 < value.length(); ++i) {
-                    key_[i] = std::stoi(value.substr(i*2, 2), nullptr, 16);
+                for (size_t i = 0; i < 32 && i * 2 < value.length(); ++i) {
+                    key_[i] = static_cast<uint8_t>(
+                        std::stoi(value.substr(i * 2, 2), nullptr, 16));
                 }
                 std::cout << "[AES256Encryptor] Key updated from hex" << std::endl;
-                return true;
+            } else {
+                std::cerr << "[AES256Encryptor] Invalid key format (expected 64 hex chars)" << std::endl;
             }
-            std::cerr << "[AES256Encryptor] Invalid key format (expected 64 hex chars)" << std::endl;
-            return false;
         }
-        return false;
     }
-    
+
     std::string getParameter(const std::string& key) const override {
-        if (key == "key") {
-            // Return key as hex string (for sharing with decryptor)
+        if (key == "key" || key == "aes_256_key") {
             std::string hex;
             hex.reserve(64);
             for (uint8_t byte : key_) {
@@ -228,31 +206,12 @@ public:
         }
         return "";
     }
-    
+
     double getProcessingLatency() const override {
-        // AES encryption adds minimal latency (<0.1ms)
-        return 0.0001;  // 100 microseconds
+        return 0.0001;  // ~100 microseconds
     }
 };
 
 } // namespace nda
 
-// Export plugin factory functions
-extern "C" {
-
-#ifdef _WIN32
-__declspec(dllexport)
-#endif
-nda::BasePlugin* createPlugin() {
-    return new nda::AES256EncryptorPlugin();
-}
-
-#ifdef _WIN32
-__declspec(dllexport)
-#endif
-void destroyPlugin(nda::BasePlugin* plugin) {
-    delete plugin;
-}
-
-} // extern "C"
-
+NDA_DECLARE_PLUGIN(nda::AES256EncryptorPlugin)
