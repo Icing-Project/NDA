@@ -2,7 +2,11 @@
  * AES-256-CTR Decryptor Processor Plugin
  *
  * Symmetric decryption using OpenSSL EVP API with AES-256 in CTR mode.
- * Uses the same deterministic frame counter for the IV as the encryptor.
+ * The cipher context is initialized once in start() with an all-zero IV and
+ * then used as a streaming cipher across processAudio() calls. This makes the
+ * decryption byte-position-based rather than per-buffer, so it works correctly
+ * regardless of the buffer size the pipeline negotiates — including when the
+ * encryptor and decryptor pipelines happen to negotiate different frame sizes.
  *
  * WARNING: Key exchange is out of scope. Keys must be shared out-of-band
  * or via the NDA Crypto menu (Generate AES Key -> Apply to Pipeline).
@@ -25,7 +29,6 @@ private:
     int sampleRate_;
     int channels_;
     PluginState state_;
-    uint64_t frameCounter_;        // Deterministic IV counter (must match encryptor)
 
 public:
     AES256DecryptorPlugin()
@@ -34,7 +37,6 @@ public:
         , sampleRate_(48000)
         , channels_(2)
         , state_(PluginState::Unloaded)
-        , frameCounter_(0)
     {
         ctx_ = EVP_CIPHER_CTX_new();
     }
@@ -78,16 +80,26 @@ public:
             return false;
         }
 
+        // Initialize streaming CTR context once with all-zero IV.
+        // All subsequent processAudio() calls use EVP_DecryptUpdate only,
+        // maintaining continuous keystream position regardless of buffer size.
+        uint8_t iv[16] = {0};
+        if (EVP_DecryptInit_ex(ctx_, EVP_aes_256_ctr(), nullptr,
+                               key_.data(), iv) != 1) {
+            std::cerr << "[AES256Decryptor] Failed to initialize CTR context" << std::endl;
+            state_ = PluginState::Error;
+            return false;
+        }
+
         state_ = PluginState::Running;
-        frameCounter_ = 0;
-        std::cout << "[AES256Decryptor] Started" << std::endl;
+        std::cout << "[AES256Decryptor] Started (streaming CTR, IV=0)" << std::endl;
         return true;
     }
 
     void stop() override {
         if (state_ == PluginState::Running) {
             state_ = PluginState::Initialized;
-            std::cout << "[AES256Decryptor] Stopped after " << frameCounter_ << " frames" << std::endl;
+            std::cout << "[AES256Decryptor] Stopped" << std::endl;
         }
     }
 
@@ -102,14 +114,6 @@ public:
             return false;
         }
 
-        // Build deterministic 16-byte IV from frame counter (must match encryptor)
-        uint8_t iv[16] = {0};
-        uint64_t counter = frameCounter_;
-        for (int i = 15; i >= 8; --i) {
-            iv[i] = static_cast<uint8_t>(counter & 0xFF);
-            counter >>= 8;
-        }
-
         // Convert encrypted float data to bytes
         size_t totalSamples = static_cast<size_t>(buffer.getFrameCount()) * buffer.getChannelCount();
         size_t dataSize = totalSamples * sizeof(float);
@@ -122,16 +126,9 @@ public:
             }
         }
 
-        // Decrypt with AES-256-CTR (plaintext size == ciphertext size)
-        // Note: CTR decryption is identical to encryption (XOR with keystream)
+        // Decrypt with AES-256-CTR (streaming: no re-init, context advances)
         std::vector<uint8_t> plaintext(dataSize);
         int len = 0;
-
-        if (EVP_DecryptInit_ex(ctx_, EVP_aes_256_ctr(), nullptr,
-                               key_.data(), iv) != 1) {
-            std::cerr << "[AES256Decryptor] Decrypt init failed" << std::endl;
-            return false;
-        }
 
         if (EVP_DecryptUpdate(ctx_, plaintext.data(), &len,
                               ciphertext.data(), static_cast<int>(dataSize)) != 1) {
@@ -147,16 +144,15 @@ public:
             }
         }
 
-        frameCounter_++;
         return true;
     }
 
     PluginInfo getInfo() const override {
         PluginInfo info;
         info.name = "AES-256-CTR Decryptor";
-        info.version = "2.0.0";
+        info.version = "2.1.0";
         info.author = "NDA Team";
-        info.description = "AES-256-CTR audio decryption with deterministic counter IV";
+        info.description = "AES-256-CTR audio decryption (streaming, frame-size-independent)";
         info.type = PluginType::Processor;
         info.apiVersion = 1;
         return info;

@@ -9,6 +9,7 @@
 #include <QVBoxLayout>
 #include <algorithm>
 #include <iostream>
+#include <thread>
 
 namespace nda {
 
@@ -1210,20 +1211,31 @@ void UnifiedPipelineView::onStartBothClicked()
 
 void UnifiedPipelineView::onStopBothClicked()
 {
+    // Stop both pipelines in parallel to avoid a cascading failure where
+    // stopping TX first disconnects the PipeBridge and leaves the RX pipeline
+    // spinning with read failures while waiting for the TX thread to join.
+    std::thread rxStopThread;
+    if (rxPipeline_) {
+        rxStopThread = std::thread([this]() { rxPipeline_->stop(); });
+    }
     if (txPipeline_) {
         txPipeline_->stop();
+    }
+    if (rxStopThread.joinable()) {
+        rxStopThread.join();
+    }
+
+    if (txPipeline_) {
         stopTXButton_->setEnabled(false);
         emit txPipelineStopped();
     }
-
     if (rxPipeline_) {
-        rxPipeline_->stop();
         stopRXButton_->setEnabled(false);
         emit rxPipelineStopped();
     }
 
-    updateTXStatus();  // This will properly set startTXButton state
-    updateRXStatus();  // This will properly set startRXButton state
+    updateTXStatus();
+    updateRXStatus();
 }
 
 void UnifiedPipelineView::onPTTPressed()
