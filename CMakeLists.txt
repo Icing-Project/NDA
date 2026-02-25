@@ -547,8 +547,14 @@ if(LINUX_AUDIO_AVAILABLE)
     endif()
 endif()
 
-# Add example processor plugins (AES256 Encryptor/Decryptor)
-# add_subdirectory(plugins_src/examples)
+# Example processor plugins (AES256 Encryptor/Decryptor)
+add_nda_plugin(AES256EncryptorPlugin plugins_src/examples/AES256EncryptorPlugin.cpp)
+target_link_libraries(AES256EncryptorPlugin OpenSSL::SSL OpenSSL::Crypto)
+list(APPEND NDA_PLUGIN_TARGETS AES256EncryptorPlugin)
+
+add_nda_plugin(AES256DecryptorPlugin plugins_src/examples/AES256DecryptorPlugin.cpp)
+target_link_libraries(AES256DecryptorPlugin OpenSSL::SSL OpenSSL::Crypto)
+list(APPEND NDA_PLUGIN_TARGETS AES256DecryptorPlugin)
 
 # ============================================================================
 # Nade Text Messaging Plugins (encrypted text over FSK radio)
